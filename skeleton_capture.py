@@ -1,6 +1,7 @@
 import cv2
 import mediapipe as mp
 import pandas as pd
+from scipy.signal import savgol_filter
 
 print("🔍 스켈레톤 추적 시작 준비...")
 
@@ -54,14 +55,25 @@ while True:
         print("🛑 'q' 키 입력으로 종료합니다.")
         break
 
+# 필터 파라미터 설정
+window_length = 9   # 반드시 홀수, 5~15 권장
+polyorder = 3       # 보통 2~4 사용
 # 저장
 columns = []
 for i in range(33):
     columns.extend([f'{i}_x', f'{i}_y', f'{i}_z', f'{i}_vis'])
 
 df = pd.DataFrame(output_data, columns=columns)
-df.to_csv("skeleton_data.csv", index=False)
 
-cap.release()
-cv2.destroyAllWindows()
-print("✅ skeleton_data.csv 저장 완료.")
+# 📦 Savitzky-Golay 필터 후처리
+from scipy.signal import savgol_filter
+window_length = 9
+polyorder = 3
+for col in df.columns:
+    try:
+        df[col] = savgol_filter(df[col], window_length=window_length, polyorder=polyorder)
+    except ValueError:
+        print(f"⚠️ 필터 생략: '{col}' (프레임 수 부족)")
+
+df.to_csv("skeleton_data.csv", index=False)
+print("✅ skeleton_data.csv 저장 완료 (필터 적용됨).")
