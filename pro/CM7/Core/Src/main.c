@@ -23,11 +23,11 @@
 #include "spi.h"
 #include "usart.h"
 #include "gpio.h"
-#include "semphr.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 volatile int uartTxDone = 1;
-
+volatile bool sensingEnabled = false;  // 전역 변수
 
 SemaphoreHandle_t uartMtx;          // UART 보호용 뮤텍스
 SemaphoreHandle_t uartTxDoneSem;    // DMA 완료 신호용 바이너리 세마포어
@@ -38,6 +38,16 @@ typedef struct {
     int16_t ax, ay, az;
     int16_t gx, gy, gz;
 } IMU_Data_t;
+
+
+#define imu_cs1_port GPIOD
+#define imu_cs1_num GPIO_PIN_0
+
+#define imu_cs2_port GPIOD
+#define imu_cs2_num GPIO_PIN_1
+
+#define imu_cs3_port GPIOD
+#define imu_cs3_num GPIO_PIN_12
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -133,27 +143,52 @@ void Read_imu1(void *pvParameters)
 
     for(;;)
     {
-        uint8_t reg = 0x3B | 0x80;
-        HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
-        HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
-        HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    	if (sensingEnabled)
+    	{
+    		uint8_t reg = 0x3B | 0x80;
+    		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    		HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
+    		HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
+    		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
 
-        imu.ax = (int16_t)((buf[0]  << 8) | buf[1]);
-        imu.ay = (int16_t)((buf[2]  << 8) | buf[3]);
-        imu.az = (int16_t)((buf[4]  << 8) | buf[5]);
-        imu.gx = (int16_t)((buf[8]  << 8) | buf[9]);
-        imu.gy = (int16_t)((buf[10] << 8) | buf[11]);
-        imu.gz = (int16_t)((buf[12] << 8) | buf[13]);
+    		imu.ax = (int16_t)((buf[0]  << 8) | buf[1]);
+    		imu.ay = (int16_t)((buf[2]  << 8) | buf[3]);
+    		imu.az = (int16_t)((buf[4]  << 8) | buf[5]);
+    		imu.gx = (int16_t)((buf[8]  << 8) | buf[9]);
+    		imu.gy = (int16_t)((buf[10] << 8) | buf[11]);
+    		imu.gz = (int16_t)((buf[12] << 8) | buf[13]);
 
-        int len = snprintf((char*)msg, sizeof(msg),
-                           "IMU1,%d,%d,%d,%d,%d,%d\r\n",
+    		int len = snprintf((char*)msg, sizeof(msg),
+    				"IMU1,%d,%d,%d,%d,%d,%d\r\n",
+					imu.ax, imu.ay, imu.az,
+                           imu.gx, imu.gy, imu.gz);
+
+			if (len > 0) {
+				uart1_dma_printf(msg, (uint16_t)len, pdMS_TO_TICKS(50));
+			}
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+			HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
+			HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+
+			imu.ax = (int16_t)((buf[0]  << 8) | buf[1]);
+			imu.ay = (int16_t)((buf[2]  << 8) | buf[3]);
+			imu.az = (int16_t)((buf[4]  << 8) | buf[5]);
+			imu.gx = (int16_t)((buf[8]  << 8) | buf[9]);
+			imu.gy = (int16_t)((buf[10] << 8) | buf[11]);
+			imu.gz = (int16_t)((buf[12] << 8) | buf[13]);
+
+			len = snprintf((char*)msg, sizeof(msg),
+							   "IMU3,%d,%d,%d,%d,%d,%d\r\n",
                            imu.ax, imu.ay, imu.az,
                            imu.gx, imu.gy, imu.gz);
 
-        if (len > 0) {
-            uart1_dma_printf(msg, (uint16_t)len, pdMS_TO_TICKS(50));
-        }
+			if (len > 0)
+			{
+				uart1_dma_printf(msg, (uint16_t)len, pdMS_TO_TICKS(50));
+			}
+    	}
+
 
         vTaskDelay(pdMS_TO_TICKS(50)); // 20 Hz (Tick=1ms 기준)
     }
@@ -185,7 +220,8 @@ void Read_imu2(void *pvParameters)
                            imu.ax, imu.ay, imu.az,
                            imu.gx, imu.gy, imu.gz);
 
-        if (len > 0) {
+        if (len > 0)
+        {
             uart1_dma_printf(msg, (uint16_t)len, pdMS_TO_TICKS(50));
         }
 
@@ -259,9 +295,9 @@ Error_Handler();
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_SPI1_Init();
   MX_SPI2_Init();
   MX_USART1_UART_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   uartMtx = xSemaphoreCreateMutex();
   configASSERT(uartMtx != NULL);
@@ -270,7 +306,8 @@ Error_Handler();
   configASSERT(uartTxDoneSem != NULL);
 
   xTaskCreate(Read_imu1,"Read_imu1",1024,NULL,2,NULL);
-  xTaskCreate(Read_imu2,"Read_imu2",1024,NULL,2,NULL);
+  //xTaskCreate(Read_imu2,"Read_imu2",1024,NULL,2,NULL);
+
   //xTaskCreate(UART_TxTask, "uart", 512, NULL,3, NULL);
 
 

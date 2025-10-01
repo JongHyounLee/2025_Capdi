@@ -30,9 +30,3 @@ C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTO
 C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:2648:7:vQueueAddToRegistry	24	static
 C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:2677:14:pcQueueGetName	24	static
 C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:2705:7:vQueueUnregisterQueue	24	static
-C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:2773:19:xQueueCreateSet	24	static
-C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:2787:13:xQueueAddToSet	24	static
-C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:2820:13:xQueueRemoveFromSet	24	static
-C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:2856:25:xQueueSelectFromSet	24	static
-C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:2869:25:xQueueSelectFromSetFromISR	24	static
-C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:2882:20:prvNotifyQueueSetContainer	40	static,ignoring_inline_asm

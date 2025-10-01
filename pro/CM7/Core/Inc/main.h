@@ -34,7 +34,8 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdbool.h>   // bool 정의 포함
+extern volatile bool sensingEnabled;   // 선언 (어디선가 정의돼 있다 알림)
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -60,10 +61,15 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define imu_cs3_Pin GPIO_PIN_12
+#define imu_cs3_GPIO_Port GPIOD
 #define imu_cs1_Pin GPIO_PIN_0
 #define imu_cs1_GPIO_Port GPIOD
 #define imu_cs2_Pin GPIO_PIN_1
 #define imu_cs2_GPIO_Port GPIOD
+#define imu_start_Pin GPIO_PIN_0
+#define imu_start_GPIO_Port GPIOE
+#define imu_start_EXTI_IRQn EXTI0_IRQn
 
 /* USER CODE BEGIN Private defines */
 
