@@ -1,8 +1,8 @@
-../Core/Src/main.c:98:6:HAL_UART_TxCpltCallback	24	static,ignoring_inline_asm
-../Core/Src/main.c:109:33:uart1_dma_printf	32	static
-../Core/Src/main.c:138:6:Read_imu1	88	static
-../Core/Src/main.c:197:6:Read_imu2	88	static
-../Core/Src/main.c:237:5:main	32	static,ignoring_inline_asm
-../Core/Src/main.c:351:6:SystemClock_Config	120	static
-../Core/Src/main.c:418:6:HAL_TIM_PeriodElapsedCallback	16	static
-../Core/Src/main.c:436:6:Error_Handler	4	static,ignoring_inline_asm
+../Core/Src/main.c:100:6:HAL_UART_TxCpltCallback	24	static,ignoring_inline_asm
+../Core/Src/main.c:111:33:uart1_dma_printf	32	static
+../Core/Src/main.c:140:6:Read_imu1	96	static
+../Core/Src/main.c:201:6:Read_imu2	88	static
+../Core/Src/main.c:241:5:main	32	static,ignoring_inline_asm
+../Core/Src/main.c:357:6:SystemClock_Config	120	static
+../Core/Src/main.c:424:6:HAL_TIM_PeriodElapsedCallback	16	static
+../Core/Src/main.c:448:6:Error_Handler	4	static,ignoring_inline_asm

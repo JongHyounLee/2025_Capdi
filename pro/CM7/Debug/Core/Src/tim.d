@@ -1,4 +1,4 @@
-Core/Src/gpio.o: ../Core/Src/gpio.c ../Core/Inc/gpio.h ../Core/Inc/main.h \
+Core/Src/tim.o: ../Core/Src/tim.c ../Core/Inc/tim.h ../Core/Inc/main.h \
  ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h \
  ../Core/Inc/stm32h7xx_hal_conf.h \
  ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_rcc.h \
@@ -35,9 +35,8 @@ Core/Src/gpio.o: ../Core/Src/gpio.c ../Core/Inc/gpio.h ../Core/Inc/main.h \
  ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_uart_ex.h \
  ../../Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.h \
  ../Core/Inc/stm32h7xx_nucleo_conf.h \
- ../../Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo_errno.h \
- ../Core/Inc/main.h ../Core/Inc/tim.h
-../Core/Inc/gpio.h:
+ ../../Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo_errno.h
+../Core/Inc/tim.h:
 ../Core/Inc/main.h:
 ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h:
 ../Core/Inc/stm32h7xx_hal_conf.h:
@@ -76,5 +75,3 @@ Core/Src/gpio.o: ../Core/Src/gpio.c ../Core/Inc/gpio.h ../Core/Inc/main.h \
 ../../Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.h:
 ../Core/Inc/stm32h7xx_nucleo_conf.h:
 ../../Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo_errno.h:
-../Core/Inc/main.h:
-../Core/Inc/tim.h:

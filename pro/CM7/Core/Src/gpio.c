@@ -23,6 +23,8 @@
 
 /* USER CODE BEGIN 0 */
 #include "main.h"
+#include "tim.h"
+
 /* USER CODE END 0 */
 
 /*----------------------------------------------------------------------------*/
@@ -30,11 +32,24 @@
 /*----------------------------------------------------------------------------*/
 /* USER CODE BEGIN 1 */
 // main.c 또는 gpio.c 안에 작성
+
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    if (GPIO_Pin == GPIO_PIN_0) // 예: PE0에 버튼 연결
+    HAL_NVIC_DisableIRQ(EXTI0_IRQn);
+
+    if (GPIO_Pin == GPIO_PIN_0)
     {
-        sensingEnabled = !sensingEnabled;  // IMU 센싱 ON/OFF 토글
+        // 토글
+        sensingEnabled = !sensingEnabled;
+
+        // 센싱 시작할 때만 times 증가
+        if (sensingEnabled)
+        {
+            times++;
+        }
+
+        __HAL_TIM_SET_COUNTER(&htim6, 0);     // 카운터 리셋
+        HAL_TIM_Base_Start_IT(&htim6);        // 100ms 타이머 스타트
     }
 }
 
