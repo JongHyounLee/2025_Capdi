@@ -35,21 +35,26 @@
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    HAL_NVIC_DisableIRQ(EXTI0_IRQn);
+    static uint32_t lastTick = 0;
+    uint32_t now = HAL_GetTick();
 
     if (GPIO_Pin == GPIO_PIN_0)
     {
-        // 토글
+        // 250ms 이내 재진입 방지
+        if (now - lastTick < 250)
+            return;
+        lastTick = now;
+
         sensingEnabled = !sensingEnabled;
 
-        // 센싱 시작할 때만 times 증가
+
         if (sensingEnabled)
         {
-            times++;
+        	times++;
+        	action++;
         }
-
-        __HAL_TIM_SET_COUNTER(&htim6, 0);     // 카운터 리셋
-        HAL_TIM_Base_Start_IT(&htim6);        // 100ms 타이머 스타트
+        __HAL_TIM_SET_COUNTER(&htim6, 0);
+        HAL_TIM_Base_Start_IT(&htim6);
     }
 }
 

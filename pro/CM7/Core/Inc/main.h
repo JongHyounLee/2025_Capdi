@@ -37,6 +37,7 @@ extern "C" {
 #include <stdbool.h>   // bool 정의 포함
 extern volatile bool sensingEnabled;   // 선언 (어디선가 정의돼 있다 알림)
 extern volatile uint8_t times;
+extern volatile uint8_t action;
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
