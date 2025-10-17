@@ -255,7 +255,6 @@ void vTaskLogger(void *pvParameters)
                 imuFrame.imu_ax[1], imuFrame.imu_ay[1], imuFrame.imu_az[1],
                 imuFrame.imu_gx[1], imuFrame.imu_gy[1], imuFrame.imu_gz[1],
 
-
                 imuFrame.imu_ax[2], imuFrame.imu_ay[2], imuFrame.imu_az[2],
                 imuFrame.imu_gx[2], imuFrame.imu_gy[2], imuFrame.imu_gz[2],
 
@@ -294,12 +293,12 @@ void Read_imu2(void *pvParameters)
     		HAL_SPI_Receive(&hspi2, buf, 14, HAL_MAX_DELAY);
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
 
-            imuFrame.imu_ax[0] = (int16_t)((buf[0]<<8)|buf[1]);
-            imuFrame.imu_ay[0] = (int16_t)((buf[2]<<8)|buf[3]);
-            imuFrame.imu_az[0] = (int16_t)((buf[4]<<8)|buf[5]);
-            imuFrame.imu_gx[0] = (int16_t)((buf[8]<<8)|buf[9]);
-            imuFrame.imu_gy[0] = (int16_t)((buf[10]<<8)|buf[11]);
-            imuFrame.imu_gz[0] = (int16_t)((buf[12]<<8)|buf[13]);
+            imuFrame.imu_ax[2] = (int16_t)((buf[0]<<8)|buf[1]);
+            imuFrame.imu_ay[2] = (int16_t)((buf[2]<<8)|buf[3]);
+            imuFrame.imu_az[2] = (int16_t)((buf[4]<<8)|buf[5]);
+            imuFrame.imu_gx[2] = (int16_t)((buf[8]<<8)|buf[9]);
+            imuFrame.imu_gy[2] = (int16_t)((buf[10]<<8)|buf[11]);
+            imuFrame.imu_gz[2] = (int16_t)((buf[12]<<8)|buf[13]);
 
 
 
@@ -308,12 +307,12 @@ void Read_imu2(void *pvParameters)
 			HAL_SPI_Receive(&hspi2, buf, 14, HAL_MAX_DELAY);
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
 
-	        imuFrame.imu_ax[1] = (int16_t)((buf[0]<<8)|buf[1]);
-	        imuFrame.imu_ay[1] = (int16_t)((buf[2]<<8)|buf[3]);
-	        imuFrame.imu_az[1] = (int16_t)((buf[4]<<8)|buf[5]);
-	        imuFrame.imu_gx[1] = (int16_t)((buf[8]<<8)|buf[9]);
-	        imuFrame.imu_gy[1] = (int16_t)((buf[10]<<8)|buf[11]);
-	        imuFrame.imu_gz[1] = (int16_t)((buf[12]<<8)|buf[13]);
+	        imuFrame.imu_ax[3] = (int16_t)((buf[0]<<8)|buf[1]);
+	        imuFrame.imu_ay[3] = (int16_t)((buf[2]<<8)|buf[3]);
+	        imuFrame.imu_az[3] = (int16_t)((buf[4]<<8)|buf[5]);
+	        imuFrame.imu_gx[3] = (int16_t)((buf[8]<<8)|buf[9]);
+	        imuFrame.imu_gy[3] = (int16_t)((buf[10]<<8)|buf[11]);
+	        imuFrame.imu_gz[3] = (int16_t)((buf[12]<<8)|buf[13]);
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
 	        vTaskDelay(pdMS_TO_TICKS(20));
@@ -345,12 +344,12 @@ void Read_imu3(void *pvParameters)
     		HAL_SPI_Receive(&hspi3, buf, 14, HAL_MAX_DELAY);
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
 
-            imuFrame.imu_ax[0] = (int16_t)((buf[0]<<8)|buf[1]);
-            imuFrame.imu_ay[0] = (int16_t)((buf[2]<<8)|buf[3]);
-            imuFrame.imu_az[0] = (int16_t)((buf[4]<<8)|buf[5]);
-            imuFrame.imu_gx[0] = (int16_t)((buf[8]<<8)|buf[9]);
-            imuFrame.imu_gy[0] = (int16_t)((buf[10]<<8)|buf[11]);
-            imuFrame.imu_gz[0] = (int16_t)((buf[12]<<8)|buf[13]);
+            imuFrame.imu_ax[4] = (int16_t)((buf[0]<<8)|buf[1]);
+            imuFrame.imu_ay[4] = (int16_t)((buf[2]<<8)|buf[3]);
+            imuFrame.imu_az[4] = (int16_t)((buf[4]<<8)|buf[5]);
+            imuFrame.imu_gx[4] = (int16_t)((buf[8]<<8)|buf[9]);
+            imuFrame.imu_gy[4] = (int16_t)((buf[10]<<8)|buf[11]);
+            imuFrame.imu_gz[4] = (int16_t)((buf[12]<<8)|buf[13]);
 
 
 
@@ -359,12 +358,12 @@ void Read_imu3(void *pvParameters)
 			HAL_SPI_Receive(&hspi3, buf, 14, HAL_MAX_DELAY);
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_SET);
 
-	        imuFrame.imu_ax[1] = (int16_t)((buf[0]<<8)|buf[1]);
-	        imuFrame.imu_ay[1] = (int16_t)((buf[2]<<8)|buf[3]);
-	        imuFrame.imu_az[1] = (int16_t)((buf[4]<<8)|buf[5]);
-	        imuFrame.imu_gx[1] = (int16_t)((buf[8]<<8)|buf[9]);
-	        imuFrame.imu_gy[1] = (int16_t)((buf[10]<<8)|buf[11]);
-	        imuFrame.imu_gz[1] = (int16_t)((buf[12]<<8)|buf[13]);
+	        imuFrame.imu_ax[5] = (int16_t)((buf[0]<<8)|buf[1]);
+	        imuFrame.imu_ay[5] = (int16_t)((buf[2]<<8)|buf[3]);
+	        imuFrame.imu_az[5] = (int16_t)((buf[4]<<8)|buf[5]);
+	        imuFrame.imu_gx[5] = (int16_t)((buf[8]<<8)|buf[9]);
+	        imuFrame.imu_gy[5] = (int16_t)((buf[10]<<8)|buf[11]);
+	        imuFrame.imu_gz[5] = (int16_t)((buf[12]<<8)|buf[13]);
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
 	        vTaskDelay(pdMS_TO_TICKS(20));
