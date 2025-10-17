@@ -24,7 +24,10 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-
+#include <string.h>
+#include "FreeRTOS.h"
+#include "semphr.h"   // ✅ 세마포어 관련 함수 선언 (필수)
+#include "task.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 volatile int uartTxDone = 1;
@@ -43,6 +46,7 @@ typedef struct {
     int16_t imu_gx[6];
     int16_t imu_gy[6];
     int16_t imu_gz[6];
+    TickType_t tick[6];
 } IMU_Frame_t;
 
 volatile IMU_Frame_t imuFrame;
@@ -181,14 +185,13 @@ void Read_imu1(void *pvParameters)
 
     uint8_t buf[14];
 	uint8_t reg = 0x3B | 0x80;
-
-
-
+    TickType_t tick_now;
     for(;;)
     {
     	if (sensingEnabled)
     	{
 
+    		tick_now = xTaskGetTickCount();
 
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     		HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
@@ -202,6 +205,7 @@ void Read_imu1(void *pvParameters)
             imuFrame.imu_gy[0] = (int16_t)((buf[10]<<8)|buf[11]);
             imuFrame.imu_gz[0] = (int16_t)((buf[12]<<8)|buf[13]);
 
+            imuFrame.tick[0] = tick_now; // tick 저장
 
 
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
@@ -216,6 +220,8 @@ void Read_imu1(void *pvParameters)
 	        imuFrame.imu_gy[1] = (int16_t)((buf[10]<<8)|buf[11]);
 	        imuFrame.imu_gz[1] = (int16_t)((buf[12]<<8)|buf[13]);
 
+	        imuFrame.tick[1] = tick_now; // tick 저장 (같은 시점)
+
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
 	        vTaskDelay(pdMS_TO_TICKS(20));
 
@@ -228,7 +234,7 @@ void Read_imu1(void *pvParameters)
 
 void vTaskLogger(void *pvParameters)
 {
-    char msg[256];
+    char msg[1024];
 
     for (;;) {
             // SPI1, SPI2, SPI3 Task에서 모두 완료 신호 기다림
@@ -244,8 +250,8 @@ void vTaskLogger(void *pvParameters)
             	    "IMU2,%d,%d,%d,%d,%d,%d,"
 					"IMU3,%d,%d,%d,%d,%d,%d,"
 					"IMU4,%d,%d,%d,%d,%d,%d,"
-					"IMU5,%d,%d,%d,%d,%d,%d,"
-					"IMU6,%d,%d,%d,%d,%d,%d, move : %d \r\n",
+					//"IMU5,%d,%d,%d,%d,%d,%d,"
+					"IMU5,%d,%d,%d,%d,%d,%d, move : %d \r\n",
 
                 imuFrame.timestep,
 
@@ -264,13 +270,14 @@ void vTaskLogger(void *pvParameters)
                 imuFrame.imu_ax[4], imuFrame.imu_ay[4], imuFrame.imu_az[4],
                 imuFrame.imu_gx[4], imuFrame.imu_gy[4], imuFrame.imu_gz[4],
 
-                imuFrame.imu_ax[5], imuFrame.imu_ay[5], imuFrame.imu_az[5],
-                imuFrame.imu_gx[5], imuFrame.imu_gy[5], imuFrame.imu_gz[5],
+  //              imuFrame.imu_ax[5], imuFrame.imu_ay[5], imuFrame.imu_az[5],
+   //             imuFrame.imu_gx[5], imuFrame.imu_gy[5], imuFrame.imu_gz[5],
 				action
                 // 나머지 1~5번 IMU 동일하게
             );
 
-            uart1_dma_printf((uint8_t *)msg, strlen(msg), pdMS_TO_TICKS(10));
+            //uart1_dma_printf((uint8_t *)msg, strlen(msg), pdMS_TO_TICKS(10));
+            HAL_UART_Transmit(&huart1, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
         }
 }
 
@@ -279,14 +286,14 @@ void Read_imu2(void *pvParameters)
 
     uint8_t buf[14];
 	uint8_t reg = 0x3B | 0x80;
-
+	TickType_t tick_now;
     imu_config_setting();
 
     for(;;)
     {
     	if (sensingEnabled)
     	{
-
+            tick_now = xTaskGetTickCount();
 
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     		HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
@@ -300,7 +307,7 @@ void Read_imu2(void *pvParameters)
             imuFrame.imu_gy[2] = (int16_t)((buf[10]<<8)|buf[11]);
             imuFrame.imu_gz[2] = (int16_t)((buf[12]<<8)|buf[13]);
 
-
+            imuFrame.tick[2] = tick_now; // tick 저장
 
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
@@ -314,11 +321,13 @@ void Read_imu2(void *pvParameters)
 	        imuFrame.imu_gy[3] = (int16_t)((buf[10]<<8)|buf[11]);
 	        imuFrame.imu_gz[3] = (int16_t)((buf[12]<<8)|buf[13]);
 
+            imuFrame.tick[3] = tick_now; // tick 저장 (같은 시점)
+
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
+
 	        vTaskDelay(pdMS_TO_TICKS(20));
 
     	}
-
 
         vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
@@ -330,6 +339,7 @@ void Read_imu3(void *pvParameters)
 
     uint8_t buf[14];
 	uint8_t reg = 0x3B | 0x80;
+    TickType_t tick_now;
 
     imu_config_setting();
 
@@ -338,6 +348,7 @@ void Read_imu3(void *pvParameters)
     	if (sensingEnabled)
     	{
 
+            tick_now = xTaskGetTickCount();
 
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     		HAL_SPI_Transmit(&hspi3, &reg, 1, HAL_MAX_DELAY);
@@ -351,8 +362,8 @@ void Read_imu3(void *pvParameters)
             imuFrame.imu_gy[4] = (int16_t)((buf[10]<<8)|buf[11]);
             imuFrame.imu_gz[4] = (int16_t)((buf[12]<<8)|buf[13]);
 
-
-
+            imuFrame.tick[4] = tick_now; // tick 저장
+/*
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi3, &reg, 1, HAL_MAX_DELAY);
 			HAL_SPI_Receive(&hspi3, buf, 14, HAL_MAX_DELAY);
@@ -365,7 +376,10 @@ void Read_imu3(void *pvParameters)
 	        imuFrame.imu_gy[5] = (int16_t)((buf[10]<<8)|buf[11]);
 	        imuFrame.imu_gz[5] = (int16_t)((buf[12]<<8)|buf[13]);
 
+            imuFrame.tick[5] = tick_now; // tick 저장 (같은 시점)
+*/
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
+
 	        vTaskDelay(pdMS_TO_TICKS(20));
 
     	}
@@ -449,6 +463,7 @@ Error_Handler();
   MX_SPI3_Init();
   /* USER CODE BEGIN 2 */
   imu_config_setting();
+
   uartMtx = xSemaphoreCreateMutex();
   configASSERT(uartMtx != NULL);
 
@@ -458,10 +473,11 @@ Error_Handler();
   uartTxDoneSem = xSemaphoreCreateBinary();
   configASSERT(uartTxDoneSem != NULL);
 
-  xTaskCreate(Read_imu1,"Read_imu1",1024,NULL,2,NULL);
-  //xTaskCreate(Read_imu2,"Read_imu2",1024,NULL,2,NULL);
-  //xTaskCreate(Read_imu3,"Read_imu3",1024,NULL,2,NULL);
   xTaskCreate(vTaskLogger,"vTaskLogger",1024, NULL,3, NULL);
+  xTaskCreate(Read_imu1,"Read_imu1",512,NULL,2,NULL);
+  xTaskCreate(Read_imu2,"Read_imu2",512,NULL,2,NULL);
+  xTaskCreate(Read_imu3,"Read_imu3",512,NULL,2,NULL);
+
 
 
   /* USER CODE END 2 */

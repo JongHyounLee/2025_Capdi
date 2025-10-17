@@ -7,6 +7,8 @@ C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTO
 C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:512:16:xQueueCreateMutexStatic	1
 C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:532:15:xQueueGetMutexHolder	2
 C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:563:15:xQueueGetMutexHolderFromISR	3
+C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:589:13:xQueueGiveMutexRecursive	4
+C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:644:13:xQueueTakeMutexRecursive	4
 C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:686:16:xQueueCreateCountingSemaphoreStatic	4
 C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:714:16:xQueueCreateCountingSemaphore	4
 C:/Users/hjl99/STM32CubeIDE/workspace_1.19.0/pro/Middlewares/Third_Party/FreeRTOS/Source/queue.c:740:12:xQueueGenericSend	23
