@@ -63,12 +63,18 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define imu_cs3_Pin GPIO_PIN_12
-#define imu_cs3_GPIO_Port GPIOD
 #define imu_cs1_Pin GPIO_PIN_0
 #define imu_cs1_GPIO_Port GPIOD
 #define imu_cs2_Pin GPIO_PIN_1
 #define imu_cs2_GPIO_Port GPIOD
+#define imu_cs3_Pin GPIO_PIN_2
+#define imu_cs3_GPIO_Port GPIOD
+#define imu_cs4_Pin GPIO_PIN_3
+#define imu_cs4_GPIO_Port GPIOD
+#define imu_cs5_Pin GPIO_PIN_4
+#define imu_cs5_GPIO_Port GPIOD
+#define imu_cs6_Pin GPIO_PIN_5
+#define imu_cs6_GPIO_Port GPIOD
 #define imu_start_Pin GPIO_PIN_0
 #define imu_start_GPIO_Port GPIOE
 #define imu_start_EXTI_IRQn EXTI0_IRQn

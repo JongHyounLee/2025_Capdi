@@ -24,10 +24,6 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-#include "string.h"
-#include "FreeRTOS.h"
-#include "task.h"
-#include "semphr.h"   // ✅ 세마포어 헤더
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -157,9 +153,27 @@ void imu_config_setting()
 	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
 	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_SET);
+
 }
 
 void Read_imu1(void *pvParameters)
@@ -168,7 +182,7 @@ void Read_imu1(void *pvParameters)
     uint8_t buf[14];
 	uint8_t reg = 0x3B | 0x80;
 
-    imu_config_setting();
+
 
     for(;;)
     {
@@ -190,10 +204,10 @@ void Read_imu1(void *pvParameters)
 
 
 
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
 			HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
 
 	        imuFrame.imu_ax[1] = (int16_t)((buf[0]<<8)|buf[1]);
 	        imuFrame.imu_ay[1] = (int16_t)((buf[2]<<8)|buf[3]);
@@ -219,27 +233,29 @@ void vTaskLogger(void *pvParameters)
     for (;;) {
             // SPI1, SPI2, SPI3 Task에서 모두 완료 신호 기다림
             xSemaphoreTake(dataReadySem, portMAX_DELAY);
-            //xSemaphoreTake(dataReadySem, portMAX_DELAY);
-            //xSemaphoreTake(dataReadySem, portMAX_DELAY);
+            xSemaphoreTake(dataReadySem, portMAX_DELAY);
+            xSemaphoreTake(dataReadySem, portMAX_DELAY);
 
             imuFrame.timestep++;
 
             snprintf(msg, sizeof(msg),
             	    "T:%lu,"
             	    "IMU1,%d,%d,%d,%d,%d,%d,"
-            	    "IMU2,%d,%d,%d,%d,%d,%d, move : %d\r\n",
-                /*"IMU3,%d,%d,%d,%d,%d,%d,"
-                "IMU4,%d,%d,%d,%d,%d,%d,"
-                "IMU5,%d,%d,%d,%d,%d,%d,"
-                "IMU6,%d,%d,%d,%d,%d,%d*/
+            	    "IMU2,%d,%d,%d,%d,%d,%d,"
+					"IMU3,%d,%d,%d,%d,%d,%d,"
+					"IMU4,%d,%d,%d,%d,%d,%d,"
+					"IMU5,%d,%d,%d,%d,%d,%d,"
+					"IMU6,%d,%d,%d,%d,%d,%d, move : %d \r\n",
+
                 imuFrame.timestep,
+
                 imuFrame.imu_ax[0], imuFrame.imu_ay[0], imuFrame.imu_az[0],
                 imuFrame.imu_gx[0], imuFrame.imu_gy[0], imuFrame.imu_gz[0],
 
                 imuFrame.imu_ax[1], imuFrame.imu_ay[1], imuFrame.imu_az[1],
-                imuFrame.imu_gx[1], imuFrame.imu_gy[1], imuFrame.imu_gz[1],action
+                imuFrame.imu_gx[1], imuFrame.imu_gy[1], imuFrame.imu_gz[1],
 
-				/*
+
                 imuFrame.imu_ax[2], imuFrame.imu_ay[2], imuFrame.imu_az[2],
                 imuFrame.imu_gx[2], imuFrame.imu_gy[2], imuFrame.imu_gz[2],
 
@@ -250,84 +266,115 @@ void vTaskLogger(void *pvParameters)
                 imuFrame.imu_gx[4], imuFrame.imu_gy[4], imuFrame.imu_gz[4],
 
                 imuFrame.imu_ax[5], imuFrame.imu_ay[5], imuFrame.imu_az[5],
-                imuFrame.imu_gx[5], imuFrame.imu_gy[5], imuFrame.imu_gz[5], */
+                imuFrame.imu_gx[5], imuFrame.imu_gy[5], imuFrame.imu_gz[5],
+				action
                 // 나머지 1~5번 IMU 동일하게
             );
 
             uart1_dma_printf((uint8_t *)msg, strlen(msg), pdMS_TO_TICKS(10));
         }
 }
-/*
+
 void Read_imu2(void *pvParameters)
 {
-    IMU_Data_t imu;
-    static uint8_t msg[128];
+
     uint8_t buf[14];
+	uint8_t reg = 0x3B | 0x80;
+
+    imu_config_setting();
 
     for(;;)
     {
-        uint8_t reg = 0x3B | 0x80;
-        HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
-        HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
-        HAL_SPI_Receive(&hspi2, buf, 14, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    	if (sensingEnabled)
+    	{
 
-        imu.ax = (int16_t)((buf[0]  << 8) | buf[1]);
-        imu.ay = (int16_t)((buf[2]  << 8) | buf[3]);
-        imu.az = (int16_t)((buf[4]  << 8) | buf[5]);
-        imu.gx = (int16_t)((buf[8]  << 8) | buf[9]);
-        imu.gy = (int16_t)((buf[10] << 8) | buf[11]);
-        imu.gz = (int16_t)((buf[12] << 8) | buf[13]);
 
-        int len = snprintf((char*)msg, sizeof(msg),
-                           "IMU2,%d,%d,%d,%d,%d,%d\r\n",
-                           imu.ax, imu.ay, imu.az,
-                           imu.gx, imu.gy, imu.gz);
+    		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    		HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
+    		HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
+    		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
 
-        if (len > 0)
-        {
-            uart1_dma_printf(msg, (uint16_t)len, pdMS_TO_TICKS(50));
-        }
+            imuFrame.imu_ax[0] = (int16_t)((buf[0]<<8)|buf[1]);
+            imuFrame.imu_ay[0] = (int16_t)((buf[2]<<8)|buf[3]);
+            imuFrame.imu_az[0] = (int16_t)((buf[4]<<8)|buf[5]);
+            imuFrame.imu_gx[0] = (int16_t)((buf[8]<<8)|buf[9]);
+            imuFrame.imu_gy[0] = (int16_t)((buf[10]<<8)|buf[11]);
+            imuFrame.imu_gz[0] = (int16_t)((buf[12]<<8)|buf[13]);
 
-        vTaskDelay(pdMS_TO_TICKS(50)); // 20 Hz
+
+
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+			HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
+			HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+	        imuFrame.imu_ax[1] = (int16_t)((buf[0]<<8)|buf[1]);
+	        imuFrame.imu_ay[1] = (int16_t)((buf[2]<<8)|buf[3]);
+	        imuFrame.imu_az[1] = (int16_t)((buf[4]<<8)|buf[5]);
+	        imuFrame.imu_gx[1] = (int16_t)((buf[8]<<8)|buf[9]);
+	        imuFrame.imu_gy[1] = (int16_t)((buf[10]<<8)|buf[11]);
+	        imuFrame.imu_gz[1] = (int16_t)((buf[12]<<8)|buf[13]);
+
+	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
+	        vTaskDelay(pdMS_TO_TICKS(20));
+
+    	}
+
+
+        vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
 }
-*/
-/*
+
+
 void Read_imu3(void *pvParameters)
 {
-    IMU_Data_t imu;
-    static uint8_t msg[128];
+
     uint8_t buf[14];
+	uint8_t reg = 0x3B | 0x80;
+
+    imu_config_setting();
 
     for(;;)
     {
-        uint8_t reg = 0x3B | 0x80;
-        HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
-        HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
-        HAL_SPI_Receive(&hspi2, buf, 14, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    	if (sensingEnabled)
+    	{
 
-        imu.ax = (int16_t)((buf[0]  << 8) | buf[1]);
-        imu.ay = (int16_t)((buf[2]  << 8) | buf[3]);
-        imu.az = (int16_t)((buf[4]  << 8) | buf[5]);
-        imu.gx = (int16_t)((buf[8]  << 8) | buf[9]);
-        imu.gy = (int16_t)((buf[10] << 8) | buf[11]);
-        imu.gz = (int16_t)((buf[12] << 8) | buf[13]);
 
-        int len = snprintf((char*)msg, sizeof(msg),
-                           "IMU2,%d,%d,%d,%d,%d,%d\r\n",
-                           imu.ax, imu.ay, imu.az,
-                           imu.gx, imu.gy, imu.gz);
+    		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    		HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
+    		HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
+    		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
 
-        if (len > 0)
-        {
-            uart1_dma_printf(msg, (uint16_t)len, pdMS_TO_TICKS(50));
-        }
+            imuFrame.imu_ax[0] = (int16_t)((buf[0]<<8)|buf[1]);
+            imuFrame.imu_ay[0] = (int16_t)((buf[2]<<8)|buf[3]);
+            imuFrame.imu_az[0] = (int16_t)((buf[4]<<8)|buf[5]);
+            imuFrame.imu_gx[0] = (int16_t)((buf[8]<<8)|buf[9]);
+            imuFrame.imu_gy[0] = (int16_t)((buf[10]<<8)|buf[11]);
+            imuFrame.imu_gz[0] = (int16_t)((buf[12]<<8)|buf[13]);
 
-        vTaskDelay(pdMS_TO_TICKS(50)); // 20 Hz
+
+
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_RESET);
+			HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
+			HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_SET);
+
+	        imuFrame.imu_ax[1] = (int16_t)((buf[0]<<8)|buf[1]);
+	        imuFrame.imu_ay[1] = (int16_t)((buf[2]<<8)|buf[3]);
+	        imuFrame.imu_az[1] = (int16_t)((buf[4]<<8)|buf[5]);
+	        imuFrame.imu_gx[1] = (int16_t)((buf[8]<<8)|buf[9]);
+	        imuFrame.imu_gy[1] = (int16_t)((buf[10]<<8)|buf[11]);
+	        imuFrame.imu_gz[1] = (int16_t)((buf[12]<<8)|buf[13]);
+
+	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
+	        vTaskDelay(pdMS_TO_TICKS(20));
+
+    	}
+
+
+        vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
-}*/
+}
 /* USER CODE END 0 */
 
 /**
@@ -402,7 +449,7 @@ Error_Handler();
   MX_TIM6_Init();
   MX_SPI3_Init();
   /* USER CODE BEGIN 2 */
-
+  imu_config_setting();
   uartMtx = xSemaphoreCreateMutex();
   configASSERT(uartMtx != NULL);
 
