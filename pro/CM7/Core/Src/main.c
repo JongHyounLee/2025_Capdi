@@ -290,8 +290,8 @@ void Read_imu2(void *pvParameters)
 
 
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
-    		HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
-    		HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
+    		HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
+    		HAL_SPI_Receive(&hspi2, buf, 14, HAL_MAX_DELAY);
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
 
             imuFrame.imu_ax[0] = (int16_t)((buf[0]<<8)|buf[1]);
@@ -304,8 +304,8 @@ void Read_imu2(void *pvParameters)
 
 
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
-			HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
-			HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
+			HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
+			HAL_SPI_Receive(&hspi2, buf, 14, HAL_MAX_DELAY);
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
 
 	        imuFrame.imu_ax[1] = (int16_t)((buf[0]<<8)|buf[1]);
@@ -341,8 +341,8 @@ void Read_imu3(void *pvParameters)
 
 
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
-    		HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
-    		HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
+    		HAL_SPI_Transmit(&hspi3, &reg, 1, HAL_MAX_DELAY);
+    		HAL_SPI_Receive(&hspi3, buf, 14, HAL_MAX_DELAY);
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
 
             imuFrame.imu_ax[0] = (int16_t)((buf[0]<<8)|buf[1]);
@@ -355,8 +355,8 @@ void Read_imu3(void *pvParameters)
 
 
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_RESET);
-			HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
-			HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
+			HAL_SPI_Transmit(&hspi3, &reg, 1, HAL_MAX_DELAY);
+			HAL_SPI_Receive(&hspi3, buf, 14, HAL_MAX_DELAY);
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_SET);
 
 	        imuFrame.imu_ax[1] = (int16_t)((buf[0]<<8)|buf[1]);
