@@ -35,7 +35,10 @@ volatile bool sensingEnabled = false;  // 전역 변수
 volatile uint8_t action=0;
 SemaphoreHandle_t uartMtx;          // UART 보호용 뮤텍스
 SemaphoreHandle_t uartTxDoneSem;    // DMA 완료 신호용 바이너리 세마포어
-
+#define UART_BUF_SIZE 1024   // 5개 IMU 데이터 한 줄 충분
+static char uartBuf[2][UART_BUF_SIZE];
+static volatile uint8_t activeBuf = 0;
+static volatile uint8_t uartDmaBusy = 0;
 
 
 typedef struct {
@@ -111,6 +114,11 @@ void MX_FREERTOS_Init(void);
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
+    if (huart == &huart1) {
+        uartDmaBusy = 0;  // DMA 완료 신호
+    }
+
+	/*
     if (huart->Instance == USART1)
     {
         uartTxDone = 1; // (선택) 폴링용 플래그도 세움
@@ -118,6 +126,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
         xSemaphoreGiveFromISR(uartTxDoneSem, &hpw);
         portYIELD_FROM_ISR(hpw);
     }
+    */
 }
 
 static inline HAL_StatusTypeDef uart1_dma_printf(const uint8_t *data, uint16_t len, TickType_t wait)
@@ -234,7 +243,7 @@ void Read_imu1(void *pvParameters)
 
 void vTaskLogger(void *pvParameters)
 {
-    char msg[1024];
+    //char msg[1024];
 
     for (;;) {
             // SPI1, SPI2, SPI3 Task에서 모두 완료 신호 기다림
@@ -244,13 +253,17 @@ void vTaskLogger(void *pvParameters)
 
             imuFrame.timestep++;
 
-            snprintf(msg, sizeof(msg),
-            	    "T:%lu,"                                 // 프레임 타임스탬프(있다면 유지)
-            	    "IMU1,%lu,%d,%d,%d,%d,%d,%d,"            // Tick1 + IMU1
-            	    "IMU2,%lu,%d,%d,%d,%d,%d,%d,"            // Tick2 + IMU2
-            	    "IMU3,%lu,%d,%d,%d,%d,%d,%d,"            // Tick3 + IMU3
-            	    "IMU4,%lu,%d,%d,%d,%d,%d,%d,"            // Tick4 + IMU4
-            	    "IMU5,%lu,%d,%d,%d,%d,%d,%d, move:%d\r\n", // Tick5 + IMU5
+            char *msg = uartBuf[activeBuf];
+            activeBuf ^= 1;
+
+            int len = snprintf(msg, UART_BUF_SIZE,
+                "T:%lu,"
+                "IMU1,%lu,%d,%d,%d,%d,%d,%d,"
+                "IMU2,%lu,%d,%d,%d,%d,%d,%d,"
+                "IMU3,%lu,%d,%d,%d,%d,%d,%d,"
+                "IMU4,%lu,%d,%d,%d,%d,%d,%d,"
+                "IMU5,%lu,%d,%d,%d,%d,%d,%d, move:%d\r\n",
+
 
 				    (unsigned long)imuFrame.timestep,
 
@@ -279,7 +292,14 @@ void vTaskLogger(void *pvParameters)
             );
 
             //uart1_dma_printf((uint8_t *)msg, strlen(msg), pdMS_TO_TICKS(10));
-            HAL_UART_Transmit(&huart1, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+            //HAL_UART_Transmit(&huart1, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
+            while (uartDmaBusy) {
+                vTaskDelay(pdMS_TO_TICKS(1));
+            }
+
+            // 4️⃣ DMA 전송 시작
+            uartDmaBusy = 1;
+            HAL_UART_Transmit_DMA(&huart1, (uint8_t *)msg, len);
         }
 }
 
