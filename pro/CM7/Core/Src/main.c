@@ -152,7 +152,7 @@ void imu_config_setting()
 {
     uint8_t configData[2];
     configData[0] = 0x1A;
-    configData[1] = 0x03;
+    configData[1] = 0x30 | 0x03;
 
 	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
@@ -245,33 +245,35 @@ void vTaskLogger(void *pvParameters)
             imuFrame.timestep++;
 
             snprintf(msg, sizeof(msg),
-            	    "T:%lu,"
-            	    "IMU1,%d,%d,%d,%d,%d,%d,"
-            	    "IMU2,%d,%d,%d,%d,%d,%d,"
-					"IMU3,%d,%d,%d,%d,%d,%d,"
-					"IMU4,%d,%d,%d,%d,%d,%d,"
-					//"IMU5,%d,%d,%d,%d,%d,%d,"
-					"IMU5,%d,%d,%d,%d,%d,%d, move : %d \r\n",
+            	    "T:%lu,"                                 // 프레임 타임스탬프(있다면 유지)
+            	    "IMU1,%lu,%d,%d,%d,%d,%d,%d,"            // Tick1 + IMU1
+            	    "IMU2,%lu,%d,%d,%d,%d,%d,%d,"            // Tick2 + IMU2
+            	    "IMU3,%lu,%d,%d,%d,%d,%d,%d,"            // Tick3 + IMU3
+            	    "IMU4,%lu,%d,%d,%d,%d,%d,%d,"            // Tick4 + IMU4
+            	    "IMU5,%lu,%d,%d,%d,%d,%d,%d, move:%d\r\n", // Tick5 + IMU5
 
-                imuFrame.timestep,
+				    (unsigned long)imuFrame.timestep,
 
-                imuFrame.imu_ax[0], imuFrame.imu_ay[0], imuFrame.imu_az[0],
-                imuFrame.imu_gx[0], imuFrame.imu_gy[0], imuFrame.imu_gz[0],
+				    (unsigned long)imuFrame.tick[0],
+				    (int)imuFrame.imu_ax[0], (int)imuFrame.imu_ay[0], (int)imuFrame.imu_az[0],
+				    (int)imuFrame.imu_gx[0], (int)imuFrame.imu_gy[0], (int)imuFrame.imu_gz[0],
 
-                imuFrame.imu_ax[1], imuFrame.imu_ay[1], imuFrame.imu_az[1],
-                imuFrame.imu_gx[1], imuFrame.imu_gy[1], imuFrame.imu_gz[1],
+				    (unsigned long)imuFrame.tick[1],
+				    (int)imuFrame.imu_ax[1], (int)imuFrame.imu_ay[1], (int)imuFrame.imu_az[1],
+				    (int)imuFrame.imu_gx[1], (int)imuFrame.imu_gy[1], (int)imuFrame.imu_gz[1],
 
-                imuFrame.imu_ax[2], imuFrame.imu_ay[2], imuFrame.imu_az[2],
-                imuFrame.imu_gx[2], imuFrame.imu_gy[2], imuFrame.imu_gz[2],
+				    (unsigned long)imuFrame.tick[2],
+				    (int)imuFrame.imu_ax[2], (int)imuFrame.imu_ay[2], (int)imuFrame.imu_az[2],
+				    (int)imuFrame.imu_gx[2], (int)imuFrame.imu_gy[2], (int)imuFrame.imu_gz[2],
 
-                imuFrame.imu_ax[3], imuFrame.imu_ay[3], imuFrame.imu_az[3],
-                imuFrame.imu_gx[3], imuFrame.imu_gy[3], imuFrame.imu_gz[3],
+				    (unsigned long)imuFrame.tick[3],
+				    (int)imuFrame.imu_ax[3], (int)imuFrame.imu_ay[3], (int)imuFrame.imu_az[3],
+				    (int)imuFrame.imu_gx[3], (int)imuFrame.imu_gy[3], (int)imuFrame.imu_gz[3],
 
-                imuFrame.imu_ax[4], imuFrame.imu_ay[4], imuFrame.imu_az[4],
-                imuFrame.imu_gx[4], imuFrame.imu_gy[4], imuFrame.imu_gz[4],
+				    (unsigned long)imuFrame.tick[4],
+				    (int)imuFrame.imu_ax[4], (int)imuFrame.imu_ay[4], (int)imuFrame.imu_az[4],
+				    (int)imuFrame.imu_gx[4], (int)imuFrame.imu_gy[4], (int)imuFrame.imu_gz[4],
 
-  //              imuFrame.imu_ax[5], imuFrame.imu_ay[5], imuFrame.imu_az[5],
-   //             imuFrame.imu_gx[5], imuFrame.imu_gy[5], imuFrame.imu_gz[5],
 				action
                 // 나머지 1~5번 IMU 동일하게
             );
