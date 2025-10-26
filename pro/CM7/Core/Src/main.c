@@ -157,36 +157,132 @@ static inline HAL_StatusTypeDef uart1_dma_printf(const uint8_t *data, uint16_t l
     return HAL_OK;
 }
 
-void imu_config_setting()
+void imu_config_setting(void)
 {
-    uint8_t configData[2];
-    configData[0] = 0x1A;
-    configData[1] = 0x30 | 0x03;
+    uint8_t resetData[2]  = {0x6B, 0x80};  // 리셋
+    uint8_t wakeData[2]   = {0x6B, 0x01};  // 슬립 해제 + PLL 클록
+    uint8_t disableI2C[2] = {0x6A, 0x10};  // I2C 비활성화
+    uint8_t configData[2] = {0x1A, 0x03};  // DLPF_CFG = 3
+    uint8_t pwr2Data[2]   = {0x6C, 0x00};  // 모든 축 활성화
 
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    // ---------------- IMU1 ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, resetData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, disableI2C, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, wakeData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, pwr2Data, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
 
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    // ---------------- IMU2 ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, resetData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, disableI2C, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, wakeData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, pwr2Data, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
 
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
-    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    // ---------------- IMU3 ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, resetData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
 
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
-    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, disableI2C, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
 
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
-    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, wakeData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
 
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_RESET);
-    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, pwr2Data, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
 
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, configData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+
+    // ---------------- IMU4 ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, resetData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, disableI2C, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, wakeData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, pwr2Data, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, configData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+
+    // ---------------- IMU5 ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, resetData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, disableI2C, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, wakeData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, pwr2Data, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, configData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
 }
 
 void Read_imu1(void *pvParameters)
@@ -309,7 +405,6 @@ void Read_imu2(void *pvParameters)
     uint8_t buf[14];
 	uint8_t reg = 0x3B | 0x80;
 	TickType_t tick_now;
-    imu_config_setting();
 
     for(;;)
     {
@@ -363,7 +458,6 @@ void Read_imu3(void *pvParameters)
 	uint8_t reg = 0x3B | 0x80;
     TickType_t tick_now;
 
-    imu_config_setting();
 
     for(;;)
     {
@@ -484,7 +578,7 @@ Error_Handler();
   MX_TIM6_Init();
   MX_SPI3_Init();
   /* USER CODE BEGIN 2 */
-  imu_config_setting();
+
 
   uartMtx = xSemaphoreCreateMutex();
   configASSERT(uartMtx != NULL);
@@ -499,7 +593,7 @@ Error_Handler();
   xTaskCreate(Read_imu1,"Read_imu1",512,NULL,2,NULL);
   xTaskCreate(Read_imu2,"Read_imu2",512,NULL,2,NULL);
   xTaskCreate(Read_imu3,"Read_imu3",512,NULL,2,NULL);
-
+  imu_config_setting();
 
 
   /* USER CODE END 2 */

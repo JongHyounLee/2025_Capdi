@@ -14,6 +14,7 @@ RM := rm -rf
 -include Drivers/BSP/STM32H7xx_Nucleo/subdir.mk
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
+-include Core/subdir.mk
 -include Common/Src/subdir.mk
 -include objects.mk
 
