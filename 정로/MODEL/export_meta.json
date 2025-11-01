@@ -1,0 +1,16 @@
+{
+  "npz": "/content/IMU_DATA_extracted/move_pad_fs50_L128_stretch.npz",
+  "L": 128,
+  "C": 6,
+  "classes": 2,
+  "width": 48,
+  "kernel": 5,
+  "dilations": [
+    1,
+    2,
+    4,
+    8,
+    16
+  ],
+  "use_dilation": true
+}
