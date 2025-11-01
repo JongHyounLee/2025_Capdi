@@ -1,0 +1,299 @@
+# =============================================
+# TCN Training (STM32Cube.AI–compatible, single-input)
+# - No Lambda/custom ops, single Input (L,C)
+# - Layers: Conv1D + BatchNorm + ReLU + Dropout + Add + GAP1D + Dense
+# - Optional dilations (set USE_DILATION=False if Cube.AI balks)
+# - Mixed precision for training OK; export as FP32 .h5 for Cube.AI
+# - Uses NPZ from the preprocessing step (move_pad_fs* .npz)
+# =============================================
+
+import os, json, math, random, glob
+from pathlib import Path
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
+
+# -------------------- Repro / GPU mem --------------------
+SEED = 42
+np.random.seed(SEED); random.seed(SEED); tf.random.set_seed(SEED)
+try:
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    for g in gpus:
+        tf.config.experimental.set_memory_growth(g, True)
+except Exception as e:
+    print('[WARN] set_memory_growth skipped:', e)
+
+# Mixed precision for speed/mem; export will cast to FP32
+from tensorflow.keras import mixed_precision
+mixed_precision.set_global_policy('mixed_float16')
+
+# -------------------- Paths / NPZ discovery --------------------
+EXTRACT_DIR = Path('/content/IMU_DATA_extracted')
+NPZ_CAND = None
+cands = sorted(EXTRACT_DIR.glob('move_pad_fs*_L*_*.npz'), key=lambda p: p.stat().st_mtime, reverse=True)
+if cands:
+    NPZ_CAND = cands[0]
+else:
+    raise FileNotFoundError('NPZ not found under /content/IMU_DATA_extracted — run preprocessing first.')
+print('[INFO] NPZ:', NPZ_CAND)
+OUT_ROOT = Path('/content/tcn_runs_cubeai'); OUT_ROOT.mkdir(parents=True, exist_ok=True)
+
+# -------------------- Train config --------------------
+L = int(next(s for s in NPZ_CAND.stem.split('_') if s.startswith('L')).lstrip('L'))
+BATCH = 32
+EPOCHS = 50
+INIT_LR = 2.0e-3
+PATIENCE = 7
+MIN_VALID_RATIO = 0.60
+
+# Model size (embedded friendly)
+WIDTH = 48           # 32~64
+KERNEL_SIZE = 5
+USE_DILATION = True
+DILATIONS = [1,2,4,8,16] if USE_DILATION else [1,1,1,1,1]
+DROPOUT_P = 0.20
+HEAD_UNITS = 96
+
+# -------------------- IO utils --------------------
+
+def load_npz(npz_path: Path):
+    d = np.load(npz_path, allow_pickle=True)
+    Xtr, ytr, Mtr = d['X_train'], d['y_train'], d['mask_train']
+    Xva, yva, Mva = d['X_val'],   d['y_val'],   d['mask_val']
+    Xte, yte, Mte = d['X_test'],  d['y_test'],  d['mask_test']
+    if Mtr.ndim == 2: Mtr = Mtr[...,None]
+    if Mva.ndim == 2: Mva = Mva[...,None]
+    if Mte.ndim == 2: Mte = Mte[...,None]
+    return (Xtr, ytr, Mtr), (Xva, yva, Mva), (Xte, yte, Mte)
+
+
+def filter_by_valid_ratio(X, y, M, thr=MIN_VALID_RATIO):
+    vr = M.mean(axis=1).reshape(-1)
+    keep = vr >= thr
+    return X[keep], y[keep], M[keep]
+
+
+def make_class_weights(y):
+    classes = np.unique(y)
+    cw = compute_class_weight(class_weight='balanced', classes=classes, y=y)
+    return {int(c): float(w) for c, w in zip(classes, cw)}
+
+# -------------------- Augmentation (train only) --------------------
+AUG = dict(yaw_deg=15.0, max_shift=4, noise_std=0.02, drop_p=0.10)
+
+def augment_np(x, m):
+    # x:(L,C), m:(L,1)
+    L_, C_ = x.shape
+    if C_ >= 6:
+        th = np.deg2rad(np.random.uniform(-AUG['yaw_deg'], AUG['yaw_deg']))
+        c, s = np.cos(th), np.sin(th)
+        ax, ay = x[:,0].copy(), x[:,1].copy()
+        gx, gy = x[:,3].copy(), x[:,4].copy()
+        x[:,0] = c*ax - s*ay
+        x[:,1] = s*ax + c*ay
+        x[:,3] = c*gx - s*gy
+        x[:,4] = s*gx + c*gy
+    sh = np.random.randint(-AUG['max_shift'], AUG['max_shift']+1)
+    if sh != 0:
+        x = np.roll(x, sh, axis=0)
+        m = np.roll(m, sh, axis=0)
+    x = x + np.random.normal(0.0, AUG['noise_std'], size=x.shape).astype(np.float32)
+    if np.random.rand() < AUG['drop_p']:
+        t0 = np.random.randint(0, max(1, L_-8))
+        t1 = min(L_, t0 + np.random.randint(4, 12))
+        x[t0:t1, :] *= 0.0
+        m[t0:t1, :] *= 0.0
+    return x.astype(np.float32), m.astype(np.float32)
+
+
+def tf_augment(x, m, y):
+    x, m = tf.numpy_function(lambda a,b: augment_np(a,b), [x, m], [tf.float32, tf.float32])
+    x.set_shape([L, None])
+    m.set_shape([L, 1])
+    return x, m, y
+
+# -------------------- Masked → Single-input --------------------
+# x <- x * m * (L / valid)  (so GAP equals masked average)
+
+def to_single_input(x, m, y):
+    x = tf.cast(x, tf.float32)
+    m = tf.cast(m, tf.float32)
+    valid = tf.reduce_sum(m)
+    scale = tf.cast(L, tf.float32) / (valid + 1e-6)
+    x_masked = x * m * scale
+    return x_masked, y
+
+# -------------------- Datasets --------------------
+
+def make_ds(X, M, y, training=False):
+    X = X.astype('float32'); M = M.astype('float32'); y = y.astype('int32')
+    C = X.shape[-1]
+    ds = tf.data.Dataset.from_tensor_slices((X, M, y))
+    if training:
+        buf = int(min(len(y), 4096))
+        ds = ds.shuffle(buffer_size=buf, seed=SEED, reshuffle_each_iteration=True)
+        ds = ds.map(tf_augment, num_parallel_calls=1, deterministic=True)
+    ds = ds.map(to_single_input, num_parallel_calls=1, deterministic=True)
+    ds = ds.map(lambda x, y: (tf.ensure_shape(x, [L, C]), y), num_parallel_calls=1)
+    ds = ds.batch(BATCH, drop_remainder=False).prefetch(1)
+    return ds
+
+# -------------------- Model (Cube.AI–safe) --------------------
+
+def tcn_block(x, filters, k=5, d=1, pdrop=0.2, name='tcn'):
+    y = layers.Conv1D(filters, k, padding='same', dilation_rate=d, use_bias=True, name=f'{name}_conv1')(x)
+    y = layers.BatchNormalization(name=f'{name}_bn1')(y)
+    y = layers.Activation('relu', name=f'{name}_relu1')(y)
+    y = layers.Dropout(pdrop, name=f'{name}_drop1')(y)
+    y = layers.Conv1D(filters, k, padding='same', dilation_rate=d, use_bias=True, name=f'{name}_conv2')(y)
+    y = layers.BatchNormalization(name=f'{name}_bn2')(y)
+    if x.shape[-1] != filters:
+        x = layers.Conv1D(filters, 1, padding='same', use_bias=True, name=f'{name}_proj')(x)
+    out = layers.Add(name=f'{name}_add')([x, y])
+    out = layers.Activation('relu', name=f'{name}_relu2')(out)
+    return out
+
+
+def build_tcn_cubeai(L, C, num_classes, filters=48, k=5, dils=(1,2,4,8,16), pdrop=0.2):
+    x_in = layers.Input(shape=(L, C), name='x')
+    x = layers.Conv1D(filters, 3, padding='same', use_bias=True, name='stem_conv')(x_in)
+    x = layers.BatchNormalization(name='stem_bn')(x)
+    x = layers.Activation('relu', name='stem_relu')(x)
+    for i, d in enumerate(dils):
+        x = tcn_block(x, filters=filters, k=k, d=d, pdrop=pdrop, name=f'tcn{i+1}')
+    x = layers.GlobalAveragePooling1D(name='gap')(x)
+    h = layers.Dense(HEAD_UNITS, activation='relu', name='head_fc')(x)
+    h = layers.Dropout(0.30, name='head_drop')(h)
+    out = layers.Dense(num_classes, activation='softmax', dtype='float32', name='pred')(h)
+    return keras.Model(x_in, out, name='tcn_cls_cubeai')
+
+# -------------------- Callbacks / LR --------------------
+
+def cosine_decay(epoch, lr):
+    t = min(epoch, EPOCHS)
+    return 0.5 * INIT_LR * (1.0 + math.cos(math.pi * t / EPOCHS))
+
+class ValF1Callback(keras.callbacks.Callback):
+    def __init__(self, ds_val, patience=7):
+        super().__init__(); self.ds_val=ds_val; self.best=-1.0; self.patience=patience; self.wait=0
+    def on_epoch_end(self, epoch, logs=None):
+        y_true, y_pred = [], []
+        for xb, yb in self.ds_val:
+            pb = self.model.predict(xb, verbose=0)
+            y_true.append(yb.numpy()); y_pred.append(pb.argmax(axis=1))
+        y_true = np.concatenate(y_true, 0); y_pred = np.concatenate(y_pred, 0)
+        f1m = f1_score(y_true, y_pred, average='macro', zero_division=0)
+        print(f"\n[VAL] macro-F1={f1m:.4f}")
+        if f1m > self.best + 1e-6:
+            self.best = f1m; self.wait = 0
+        else:
+            self.wait += 1
+            if self.wait >= self.patience:
+                print(f"[EarlyStopping] No improvement in {self.patience} epochs (val F1)")
+                self.model.stop_training = True
+
+# -------------------- Train --------------------
+
+def train_and_export(npz_path: Path):
+    (Xtr, ytr, Mtr), (Xva, yva, Mva), (Xte, yte, Mte) = load_npz(npz_path)
+
+    # remove overly padded segments
+    Xtr, ytr, Mtr = filter_by_valid_ratio(Xtr, ytr, Mtr)
+    Xva, yva, Mva = filter_by_valid_ratio(Xva, yva, Mva)
+    Xte, yte, Mte = filter_by_valid_ratio(Xte, yte, Mte)
+
+    C = Xtr.shape[-1]
+    n_classes = int(max(ytr.max(), yva.max(), yte.max()) + 1)
+    assert Xtr.shape[1] == L
+    print('[INFO] Shapes: tr', Xtr.shape, 'va', Xva.shape, 'te', Xte.shape, 'classes', n_classes)
+
+    ds_tr = make_ds(Xtr, Mtr, ytr, training=True)
+    ds_va = make_ds(Xva, Mva, yva, training=False)
+    ds_te = make_ds(Xte, Mte, yte, training=False)
+
+    model = build_tcn_cubeai(L, C, n_classes, filters=WIDTH, k=KERNEL_SIZE, dils=DILATIONS, pdrop=DROPOUT_P)
+    opt = keras.optimizers.Adam(learning_rate=INIT_LR)
+    model.compile(optimizer=opt, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    model.summary()
+
+    run_dir = OUT_ROOT / f'L{L}_C{C}_W{WIDTH}_K{KERNEL_SIZE}_dil{int(USE_DILATION)}'
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    cbs = [
+        ValF1Callback(ds_va, patience=PATIENCE),
+        keras.callbacks.ModelCheckpoint(str(run_dir / 'best.keras'), monitor='val_accuracy', save_best_only=True, mode='max', verbose=1),
+        keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=max(2, PATIENCE//3), min_lr=1e-5, verbose=1),
+        keras.callbacks.LearningRateScheduler(cosine_decay, verbose=0),
+        keras.callbacks.EarlyStopping(monitor='val_accuracy', patience=PATIENCE, restore_best_weights=True, mode='max', verbose=1),
+    ]
+
+    cw = make_class_weights(ytr)
+
+    hist = model.fit(ds_tr, validation_data=ds_va, epochs=EPOCHS, class_weight=cw, verbose=1, callbacks=cbs)
+
+    # quick eval
+    va_eval = model.evaluate(ds_va, verbose=0)
+    te_eval = model.evaluate(ds_te, verbose=0)
+    print(f"[VAL] loss={va_eval[0]:.4f}, acc={va_eval[1]:.4f}")
+    print(f"[TEST] loss={te_eval[0]:.4f}, acc={te_eval[1]:.4f}")
+
+    # -------------------- Export: FP32 HDF5 --------------------
+    # Reset policy to float32 then clone & cast weights for robust Cube.AI import
+    mixed_precision.set_global_policy('float32')
+    model_f32 = keras.models.clone_model(model)
+    model_f32.build(model.input_shape)
+    model_f32.set_weights([w.astype(np.float32) for w in model.get_weights()])
+
+    # sanity forward pass
+    xb = next(iter(ds_te.take(1)))[0]
+    _ = model_f32.predict(xb, verbose=0)
+
+    h5_path = run_dir / 'final_export_cubeai.h5'
+    model_path = run_dir / 'final.keras'
+    model_f32.save(h5_path, include_optimizer=False)
+    model.save(model_path, include_optimizer=False)
+    print('[SAVED] H5 for Cube.AI →', h5_path)
+    print('[SAVED] Keras backup →', model_path)
+
+    # Save a minimal signature for debugging
+    with open(run_dir / 'export_meta.json', 'w') as f:
+        json.dump({
+            'npz': str(npz_path), 'L': L, 'C': int(C), 'classes': n_classes,
+            'width': WIDTH, 'kernel': KERNEL_SIZE, 'dilations': DILATIONS,
+            'use_dilation': USE_DILATION
+        }, f, indent=2)
+
+    # Reports
+    def predict_ds(ds):
+        probs, ytrue = [], []
+        for xb, yb in ds:
+            probs.append(model_f32.predict(xb, verbose=0))
+            ytrue.append(yb.numpy())
+        return np.concatenate(probs, 0), np.concatenate(ytrue, 0)
+
+    pv, yv = predict_ds(ds_va)
+    pt, yt = predict_ds(ds_te)
+    yv_pred, yt_pred = pv.argmax(1), pt.argmax(1)
+
+    def save_report(y_true, y_pred, path):
+        rep = classification_report(y_true, y_pred, digits=4, zero_division=0)
+        cm  = confusion_matrix(y_true, y_pred)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(rep + '\n')
+            f.write('CM (rows=true, cols=pred):\n')
+            f.write(np.array2string(cm, separator=' ') + '\n')
+        print('\n[REPORT]\n' + rep)
+        print('CM:\n', cm)
+
+    save_report(yv, yv_pred, run_dir / 'val_report.txt')
+    save_report(yt, yt_pred, run_dir / 'test_report.txt')
+
+    return str(h5_path)
+
+# -------------------- Main --------------------
+if __name__ == '__main__':
+    export_h5 = train_and_export(NPZ_CAND)
+    print('\n[OK] Exported:', export_h5)
