@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    imu_model_data.c
   * @author  AST Embedded Analytics Research Platform
-  * @date    2025-11-01T18:36:20+0900
+  * @date    2025-11-01T20:05:58+0900
   * @brief   AI Tool Automatic Code Generator for Embedded NN computing
   ******************************************************************************
   * @attention

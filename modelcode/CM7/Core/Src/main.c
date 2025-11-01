@@ -122,34 +122,63 @@ void MX_FREERTOS_Init(void);
 void AI_Init(void)
 {
     ai_error err;
-    ai_network_params params = {
-        AI_IMU_MODEL_DATA_WEIGHTS(ai_imu_model_data_weights_get()),
-        AI_IMU_MODEL_DATA_ACTIVATIONS(activations)
-    };
 
+    // ✅ activation buffer (RAM 고정)
+    static AI_ALIGNED(4) ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];
+
+    // ✅ 네트워크 파라미터
+    ai_network_params params;
+
+    // ✅ 기본 파라미터 템플릿 로드
+    ai_imu_model_data_params_get(&params);
+
+    // ✅ 구조체 초기화 매크로를 이용해 weight/activation 연결
+    params.map_weights = AI_BUFFER_ARRAY_OBJ_INIT(
+        AI_FLAG_NONE,
+        1,
+        &AI_BUFFER_OBJ_INIT(
+            AI_BUFFER_FORMAT_U8,
+            1, 1,
+            AI_IMU_MODEL_DATA_WEIGHTS_SIZE,
+            1,
+            ai_imu_model_data_weights_get()
+        )
+    );
+
+    params.map_activations = AI_BUFFER_ARRAY_OBJ_INIT(
+        AI_FLAG_NONE,
+        1,
+        &AI_BUFFER_OBJ_INIT(
+            AI_BUFFER_FORMAT_U8,
+            1, 1,
+            AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE,
+            1,
+            activations
+        )
+    );
+
+    // ✅ 모델 초기화
     if (!ai_imu_model_init(imu_model, &params)) {
         err = ai_imu_model_get_error(imu_model);
-        printf("❌ ai_imu_model_init failed (type=%d code=%d)\r\n",
-               err.type, err.code);
+        printf("❌ ai_imu_model_init failed (type=%d code=%d)\r\n", err.type, err.code);
         Error_Handler();
+    } else {
+        printf("✅ Model initialized successfully\r\n");
     }
-
-    printf("✅ Model initialized successfully\r\n");
 }
-
 void AI_Create(void)
 {
     ai_error err;
 
-    // 모델 생성
+    // 🔹 모델 생성
     err = ai_imu_model_create(&imu_model, AI_IMU_MODEL_DATA_CONFIG);
     if (err.type != AI_ERROR_NONE) {
         printf("❌ ai_imu_model_create failed (type=%d code=%d)\r\n", err.type, err.code);
         Error_Handler();
+    } else {
+        printf("✅ Model created successfully\r\n");
     }
-    printf("✅ Model created successfully\r\n");
 }
-
 
 void AI_Run(float *input_data, float *output_data)
 {
