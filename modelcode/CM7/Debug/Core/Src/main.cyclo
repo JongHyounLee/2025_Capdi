@@ -1,0 +1,13 @@
+../Core/Src/main.c:121:6:AI_Run	2
+../Core/Src/main.c:143:6:HAL_UART_TxCpltCallback	2
+../Core/Src/main.c:188:6:store_current_imu_frame	3
+../Core/Src/main.c:202:6:imu_config_setting	2
+../Core/Src/main.c:258:6:Read_imu1	2
+../Core/Src/main.c:310:6:Read_imu2	2
+../Core/Src/main.c:361:6:Read_imu3	2
+../Core/Src/main.c:401:6:imu_store	2
+../Core/Src/main.c:424:6:IMU_MODEL	12
+../Core/Src/main.c:508:5:main	16
+../Core/Src/main.c:642:6:SystemClock_Config	4
+../Core/Src/main.c:708:6:HAL_TIM_PeriodElapsedCallback	3
+../Core/Src/main.c:732:6:Error_Handler	1
