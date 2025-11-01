@@ -42,6 +42,8 @@ static volatile uint8_t activeBuf = 0;
 static volatile uint8_t uartDmaBusy = 0;
 #define MAX_FRAMES     256
 #define FRAME_CHANNELS 30
+__attribute__((section(".RAM_D2"), aligned(32)))
+static ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];
 
 float imu_buffer[MAX_FRAMES][FRAME_CHANNELS];
 volatile uint16_t frame_count = 0;
@@ -120,15 +122,15 @@ void MX_FREERTOS_Init(void);
 void AI_Init(void)
 {
     ai_error err;
-    ai_network_params params;
-
-    AI_ALIGNED(4) static ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];
-    params.map_weights.data = ai_imu_model_data_weights_get();
-    params.map_activations.data = activations;
+    ai_network_params params = {
+        AI_IMU_MODEL_DATA_WEIGHTS(ai_imu_model_data_weights_get()),
+        AI_IMU_MODEL_DATA_ACTIVATIONS(activations)
+    };
 
     if (!ai_imu_model_init(imu_model, &params)) {
         err = ai_imu_model_get_error(imu_model);
-        printf("❌ ai_imu_model_init failed (type=%d code=%d)\r\n", err.type, err.code);
+        printf("❌ ai_imu_model_init failed (type=%d code=%d)\r\n",
+               err.type, err.code);
         Error_Handler();
     }
 
@@ -433,37 +435,42 @@ void imu_store(void *pvParameters)
 {
     for (;;)
     {
-        // 측정 중이 아닐 땐 그냥 대기
         if (!sensingEnabled) {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
-        // IMU 3개 모두 완료 신호 기다림
-        xSemaphoreTake(dataReadySem, portMAX_DELAY);
-        xSemaphoreTake(dataReadySem, portMAX_DELAY);
-        xSemaphoreTake(dataReadySem, portMAX_DELAY);
+        // IMU 3개 완료 신호 기다림
+        if (xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE &&
+            xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE &&
+            xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE)
+        {
+            // 🔒 보호구역 시작
+            xSemaphoreTake(imuSyncSem, portMAX_DELAY);
+            if (sensingEnabled)  // 🔹 버튼 OFF 중간엔 저장 중단
+                store_current_imu_frame(imu_buffer, frame_count);
+            xSemaphoreGive(imuSyncSem);
+            // 🔒 보호구역 끝
 
-        store_current_imu_frame(imu_buffer, frame_count);
-        frame_count++;
+            if (sensingEnabled)
+                frame_count++;
 
-        xSemaphoreGive(imuSyncSem);
-
-        // 버퍼 꽉 찼으면 자동 정지
-        if (frame_count >= MAX_FRAMES) {
-            sensingEnabled = false;
-            recording_done = true;
-            HAL_TIM_Base_Stop_IT(&htim6);
-            printf("■ Buffer full (%d frames)\r\n", frame_count);
+            if (frame_count >= MAX_FRAMES) {
+                sensingEnabled = false;
+                recording_done = true;
+                HAL_TIM_Base_Stop_IT(&htim6);
+                printf("■ Buffer full (%d frames)\r\n", frame_count);
+            }
         }
 
-        // 버튼으로 멈춘 경우에도 즉시 반응
-        if (!sensingEnabled) {
+        // 버튼으로 중단 시 즉시 정지
+        if (!sensingEnabled && frame_count > 0) {
+            recording_done = true;
             HAL_TIM_Base_Stop_IT(&htim6);
             printf("■ Recording manually stopped (%d frames)\r\n", frame_count);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1)); // CPU 점유 방지
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
 

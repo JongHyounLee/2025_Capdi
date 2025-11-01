@@ -176,7 +176,22 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >DTCMRAM
+  /* ---------- Place explicitly-mapped buffers into D2/D3 SRAM ---------- */
+  .RAM_D2 (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.RAM_D2)
+    *(.ram_d2*)
+    . = ALIGN(32);
+  } >RAM_D2
 
+  .RAM_D3 (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.RAM_D3)
+    *(.ram_d3*)
+    . = ALIGN(32);
+  } >RAM_D3
   /* Remove information from the compiler libraries */
   /DISCARD/ :
   {
