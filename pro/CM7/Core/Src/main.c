@@ -28,6 +28,9 @@
 #include "FreeRTOS.h"
 #include "semphr.h"   // ✅ 세마포어 관련 함수 선언 (필수)
 #include "task.h"
+#include "kalman.h"
+#include <math.h>
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 volatile int uartTxDone = 1;
@@ -36,9 +39,26 @@ volatile uint8_t action=0;
 SemaphoreHandle_t uartMtx;          // UART 보호용 뮤텍스
 SemaphoreHandle_t uartTxDoneSem;    // DMA 완료 신호용 바이너리 세마포어
 #define UART_BUF_SIZE 1024   // 5개 IMU 데이터 한 줄 충분
-static char uartBuf[2][UART_BUF_SIZE];
+__attribute__((aligned(32))) static char uartBuf[2][UART_BUF_SIZE];
 static volatile uint8_t activeBuf = 0;
 static volatile uint8_t uartDmaBusy = 0;
+// 감도(기본값: ACC ±2g, GYRO ±250dps)  → 실제 설정과 다르면 여기만 바꾸세요.
+static const float ACC_LSB_PER_G    = 16384.0f; // ±2g
+static const float GYRO_LSB_PER_DPS = 131.0f;   // ±250 dps
+static const float INV_ACC = 1.0f / ACC_LSB_PER_G;
+static const float INV_GYR = 1.0f / GYRO_LSB_PER_DPS;
+
+static int16_t gxo_off = 0, gyo_off = 0;
+
+// IMU1의 roll/pitch만 먼저 적용(필요시 IMU2~5로 확장)
+static Kalman_t kf_roll1, kf_pitch1;
+static float accRollLPF1 = 0.0f, accPitchLPF1 = 0.0f;
+
+// dt 계산용
+static TickType_t prevTickFusion = 0;
+
+// 간단 LPF
+static inline float lpf(float prev, float x, float a){ return prev + a*(x - prev); }
 
 
 typedef struct {
@@ -303,12 +323,18 @@ void Read_imu1(void *pvParameters)
     		HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
 
-            imuFrame.imu_ax[0] = (int16_t)((buf[0]<<8)|buf[1]);
-            imuFrame.imu_ay[0] = (int16_t)((buf[2]<<8)|buf[3]);
-            imuFrame.imu_az[0] = (int16_t)((buf[4]<<8)|buf[5]);
-            imuFrame.imu_gx[0] = (int16_t)((buf[8]<<8)|buf[9]);
-            imuFrame.imu_gy[0] = (int16_t)((buf[10]<<8)|buf[11]);
-            imuFrame.imu_gz[0] = (int16_t)((buf[12]<<8)|buf[13]);
+    		imuFrame.imu_ax[0] = (int16_t)((buf[0]<<8)|buf[1]);
+    		imuFrame.imu_ay[0] = (int16_t)((buf[2]<<8)|buf[3]);
+    		imuFrame.imu_az[0] = (int16_t)((buf[4]<<8)|buf[5]);
+
+    		int16_t gx_raw = (int16_t)((buf[8]<<8)|buf[9])  - gxo_off;  // 선언은 줄바꿈
+    		int16_t gy_raw = (int16_t)((buf[10]<<8)|buf[11]) - gyo_off;
+
+    		imuFrame.imu_gx[0] = gx_raw;
+    		imuFrame.imu_gy[0] = gy_raw;
+
+    		imuFrame.imu_gz[0] = (int16_t)((buf[12]<<8)|buf[13]);
+
 
             imuFrame.tick[0] = tick_now; // tick 저장
 
@@ -348,13 +374,44 @@ void vTaskLogger(void *pvParameters)
             xSemaphoreTake(dataReadySem, portMAX_DELAY);
 
             imuFrame.timestep++;
+            // ================== ⬇️ 칼만 업데이트는 여기서! ⬇️ ==================
+                    // dt 계산 (Tick → 초)
+                    TickType_t now = xTaskGetTickCount();
+                    float dt = (prevTickFusion==0) ? 0.02f
+                                                   : ((float)(now - prevTickFusion) / (float)configTICK_RATE_HZ);
+                    prevTickFusion = now;
+                    if (dt <= 0.0f || dt > 0.2f) dt = 0.02f; // 이상치 가드
+
+                    // IMU1 원시값 → 물리단위
+                    float Ax = imuFrame.imu_ax[0] * INV_ACC;
+                    float Ay = imuFrame.imu_ay[0] * INV_ACC;
+                    float Az = imuFrame.imu_az[0] * INV_ACC;
+                    float Gx = imuFrame.imu_gx[0] * INV_GYR; // deg/s
+                    float Gy = imuFrame.imu_gy[0] * INV_GYR; // deg/s
+
+                    // 가속도 기반 각도 (설치축에 따라 조정 가능)
+                    float accRoll_deg  = atan2f(Ay, Az) * 180.0f / (float)M_PI;
+                    float accPitch_deg = atan2f(-Ax, sqrtf(Ay*Ay + Az*Az)) * 180.0f / (float)M_PI;
+
+                    // LPF(부드럽게)
+                    accRollLPF1  = lpf(accRollLPF1,  accRoll_deg,  0.1f);
+                    accPitchLPF1 = lpf(accPitchLPF1, accPitch_deg, 0.1f);
+
+                    // 첫 샘플에서 초기화
+                    if (!kf_roll1.inited)  Kalman_Init(&kf_roll1,  0.001f, 0.003f, 0.03f, accRollLPF1);
+                    if (!kf_pitch1.inited) Kalman_Init(&kf_pitch1, 0.001f, 0.003f, 0.03f, accPitchLPF1);
+
+                    // 칼만 업데이트 (roll은 Gx, pitch는 Gy 사용 예)
+                    float roll_deg1  = Kalman_Update(&kf_roll1,  accRollLPF1,  Gx, dt);
+                    float pitch_deg1 = Kalman_Update(&kf_pitch1, accPitchLPF1, Gy, dt);
+                    // ================== ⬆️ 여기까지 추가 블록 ⬆️ ==================
 
             char *msg = uartBuf[activeBuf];
             activeBuf ^= 1;
 
             int len = snprintf(msg, UART_BUF_SIZE,
                 "T:%lu,"
-                "IMU1,%lu,%d,%d,%d,%d,%d,%d,"
+                "IMU1,%lu,%d,%d,%d,%d,%d,%d,ROLL=%.2f,PITCH=%.2f,"
                 "IMU2,%lu,%d,%d,%d,%d,%d,%d,"
                 "IMU3,%lu,%d,%d,%d,%d,%d,%d,"
                 "IMU4,%lu,%d,%d,%d,%d,%d,%d,"
@@ -366,6 +423,7 @@ void vTaskLogger(void *pvParameters)
 				    (unsigned long)imuFrame.tick[0],
 				    (int)imuFrame.imu_ax[0], (int)imuFrame.imu_ay[0], (int)imuFrame.imu_az[0],
 				    (int)imuFrame.imu_gx[0], (int)imuFrame.imu_gy[0], (int)imuFrame.imu_gz[0],
+					roll_deg1, pitch_deg1,
 
 				    (unsigned long)imuFrame.tick[1],
 				    (int)imuFrame.imu_ax[1], (int)imuFrame.imu_ay[1], (int)imuFrame.imu_az[1],
@@ -383,6 +441,7 @@ void vTaskLogger(void *pvParameters)
 				    (int)imuFrame.imu_ax[4], (int)imuFrame.imu_ay[4], (int)imuFrame.imu_az[4],
 				    (int)imuFrame.imu_gx[4], (int)imuFrame.imu_gy[4], (int)imuFrame.imu_gz[4],
 
+
 				action
                 // 나머지 1~5번 IMU 동일하게
             );
@@ -392,7 +451,14 @@ void vTaskLogger(void *pvParameters)
             while (uartDmaBusy) {
                 vTaskDelay(pdMS_TO_TICKS(1));
             }
+            {
+                uintptr_t addr  = (uintptr_t)msg;
+                uintptr_t start = addr & ~((uintptr_t)31);            // 32B 라인 정렬
+                size_t    size  = (size_t)len + (addr - start);
+                size      = (size + 31u) & ~31u;                      // 32B 배수로 반올림
 
+                SCB_CleanDCache_by_Addr((void*)start, (int32_t)size);
+            }
             // 4️⃣ DMA 전송 시작
             uartDmaBusy = 1;
             HAL_UART_Transmit_DMA(&huart1, (uint8_t *)msg, len);
@@ -594,6 +660,10 @@ Error_Handler();
   xTaskCreate(Read_imu2,"Read_imu2",512,NULL,2,NULL);
   xTaskCreate(Read_imu3,"Read_imu3",512,NULL,2,NULL);
   imu_config_setting();
+
+  prevTickFusion = xTaskGetTickCount();
+  kf_roll1.inited = 0;
+  kf_pitch1.inited = 0;
 
 
   /* USER CODE END 2 */
