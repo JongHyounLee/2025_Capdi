@@ -117,6 +117,38 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void AI_Init(void)
+{
+    ai_error err;
+    ai_network_params params;
+
+    AI_ALIGNED(4) static ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];
+    params.map_weights.data = ai_imu_model_data_weights_get();
+    params.map_activations.data = activations;
+
+    if (!ai_imu_model_init(imu_model, &params)) {
+        err = ai_imu_model_get_error(imu_model);
+        printf("❌ ai_imu_model_init failed (type=%d code=%d)\r\n", err.type, err.code);
+        Error_Handler();
+    }
+
+    printf("✅ Model initialized successfully\r\n");
+}
+
+void AI_Create(void)
+{
+    ai_error err;
+
+    // 모델 생성
+    err = ai_imu_model_create(&imu_model, AI_IMU_MODEL_DATA_CONFIG);
+    if (err.type != AI_ERROR_NONE) {
+        printf("❌ ai_imu_model_create failed (type=%d code=%d)\r\n", err.type, err.code);
+        Error_Handler();
+    }
+    printf("✅ Model created successfully\r\n");
+}
+
+
 void AI_Run(float *input_data, float *output_data)
 {
     ai_i32 batch;
@@ -401,23 +433,38 @@ void imu_store(void *pvParameters)
 {
     for (;;)
     {
-        // SPI1, SPI2, SPI3 Task에서 모두 완료 신호 기다림
+        // 측정 중이 아닐 땐 그냥 대기
+        if (!sensingEnabled) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
+
+        // IMU 3개 모두 완료 신호 기다림
         xSemaphoreTake(dataReadySem, portMAX_DELAY);
         xSemaphoreTake(dataReadySem, portMAX_DELAY);
         xSemaphoreTake(dataReadySem, portMAX_DELAY);
 
         store_current_imu_frame(imu_buffer, frame_count);
         frame_count++;
+
         xSemaphoreGive(imuSyncSem);
 
+        // 버퍼 꽉 찼으면 자동 정지
         if (frame_count >= MAX_FRAMES) {
             sensingEnabled = false;
             recording_done = true;
-            printf("Buffer full (%d frames)\r\n", frame_count);
+            HAL_TIM_Base_Stop_IT(&htim6);
+            printf("■ Buffer full (%d frames)\r\n", frame_count);
+        }
 
-        vTaskDelay(pdMS_TO_TICKS(50));
+        // 버튼으로 멈춘 경우에도 즉시 반응
+        if (!sensingEnabled) {
+            HAL_TIM_Base_Stop_IT(&htim6);
+            printf("■ Recording manually stopped (%d frames)\r\n", frame_count);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1)); // CPU 점유 방지
     }
-}
 }
 
 void IMU_MODEL(void *pvParameters)
@@ -599,7 +646,8 @@ Error_Handler();
   xTaskCreate(imu_store,"imu_store",512,NULL,2,NULL);
   xTaskCreate(IMU_MODEL,"IMU_MODEL",1024,NULL,2,NULL);
   imu_config_setting();
-
+  AI_Create();
+  AI_Init();
 
   /* USER CODE END 2 */
 
