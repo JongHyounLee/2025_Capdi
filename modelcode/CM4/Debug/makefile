@@ -10,7 +10,6 @@ RM := rm -rf
 # All of the sources participating in the build are defined here
 -include sources.mk
 -include Drivers/STM32H7xx_HAL_Driver/subdir.mk
--include Drivers/BSP/STM32H7xx_Nucleo/subdir.mk
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
 -include Common/Src/subdir.mk
@@ -36,34 +35,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := pro_CM4
+BUILD_ARTIFACT_NAME := modelcode_CM4
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-pro_CM4.elf \
+modelcode_CM4.elf \
 
 MAP_FILES += \
-pro_CM4.map \
+modelcode_CM4.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-pro_CM4.list \
+modelcode_CM4.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: pro_CM4.elf secondary-outputs
+main-build: modelcode_CM4.elf secondary-outputs
 
 # Tool invocations
-pro_CM4.elf pro_CM4.map: $(OBJS) $(USER_OBJS) C:\Users\hjl99\STM32CubeIDE\workspace_1.19.0\pro\CM4\STM32H755ZITX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "pro_CM4.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\hjl99\STM32CubeIDE\workspace_1.19.0\pro\CM4\STM32H755ZITX_FLASH.ld" --specs=nosys.specs -Wl,-Map="pro_CM4.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+modelcode_CM4.elf modelcode_CM4.map: $(OBJS) $(USER_OBJS) C:\Users\hjl99\STM32CubeIDE\workspace_1.19.0\modelcode\CM4\STM32H755ZITX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "modelcode_CM4.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\hjl99\STM32CubeIDE\workspace_1.19.0\modelcode\CM4\STM32H755ZITX_FLASH.ld" --specs=nosys.specs -Wl,-Map="modelcode_CM4.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -72,14 +71,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-pro_CM4.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "pro_CM4.list"
+modelcode_CM4.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "modelcode_CM4.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) default.size.stdout pro_CM4.elf pro_CM4.list pro_CM4.map
+	-$(RM) default.size.stdout modelcode_CM4.elf modelcode_CM4.list modelcode_CM4.map
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)

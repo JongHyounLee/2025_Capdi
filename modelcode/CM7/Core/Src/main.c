@@ -24,7 +24,8 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-
+#include "imu_model.h"
+#include "imu_model_data.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 ai_handle imu_model = AI_HANDLE_NULL;  // ✅ 전역 선언 추가
@@ -692,6 +693,7 @@ void SystemClock_Config(void)
     Error_Handler();
   }
   HAL_RCC_MCOConfig(RCC_MCO1, RCC_MCO1SOURCE_HSI, RCC_MCODIV_1);
+  HAL_RCC_MCOConfig(RCC_MCO2, RCC_MCO2SOURCE_SYSCLK, RCC_MCODIV_1);
 }
 
 /* USER CODE BEGIN 4 */
