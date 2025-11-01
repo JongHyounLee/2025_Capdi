@@ -1,0 +1,316 @@
+# ============================================
+# IMU 데이터 업로딩 & 라벨별 CSV 병합 파이프라인
+# (EKF→MOVE 파이프라인 이전 단계)
+# - ZIP 자동 해제 / label_* 루트 자동 탐색
+# - 라벨 매핑 자동화 + 안전 CSV 로딩(인코딩 추정)
+# - (옵션) 개별 업로드 CSV 폴백 병합
+# - (옵션) Timestep 보정(없으면 FS=50Hz로 생성)
+# - 병합본 CSV 저장 + 요약 리포트
+# ============================================
+
+# ========== 0) 드라이브 마운트 ==========
+from google.colab import drive
+drive.mount('/content/drive')
+
+# ========== 1) 경로/임포트 ==========
+from pathlib import Path
+import os, re, zipfile, json
+import numpy as np
+import pandas as pd
+
+FS_DEFAULT = 50.0  # Hz (Timestep 자동 생성 시 사용)
+
+ROOT_DIR    = Path('/content/drive/MyDrive/IMU_DATA_K')   # 드라이브 내 작업 폴더
+EXTRACT_DIR = Path('/content/IMU_DATA_extracted')         # Colab 런타임 로컬
+EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
+
+# 출력 경로들
+MERGED_CSV_PATH = EXTRACT_DIR / '_merged_all_with_labels.csv'
+META_CSV_PATH   = EXTRACT_DIR / '_merged_all_with_labels_meta.csv'
+SUMMARY_JSON    = EXTRACT_DIR / '_load_summary.json'
+
+print(f"[PATH] ROOT_DIR   = {ROOT_DIR}")
+print(f"[PATH] EXTRACT_DIR= {EXTRACT_DIR}")
+
+# ========== 2) ZIP 자동 탐색 & 해제 (없으면 스킵) ==========
+zip_candidates = sorted(ROOT_DIR.glob('*.zip'), key=lambda p: p.stat().st_mtime, reverse=True)
+if zip_candidates:
+    ZIP_PATH = zip_candidates[0]
+    print(f"[INFO] 사용할 ZIP: {ZIP_PATH.name}")
+    with zipfile.ZipFile(ZIP_PATH, 'r') as zf:
+        zf.extractall(EXTRACT_DIR)
+    print(f"[OK] 압축 해제 완료 → {EXTRACT_DIR.resolve()}")
+else:
+    print(f"[WARN] ZIP을 찾지 못했습니다: {ROOT_DIR}  (이미 해제된 폴더를 사용합니다)")
+
+# ========== 3) label_* 폴더의 '공통 상위 경로' 자동 탐색 ==========
+def _is_label_dir(p: Path):
+    name = p.name.lower()
+    # label_*, class_*, good/bad/positive/negative 지원
+    return (
+        name.startswith('label_') or
+        name.startswith('class_') or
+        name in {'good', 'bad', 'positive', 'negative'}
+    )
+
+def _list_label_dirs(base: Path):
+    return [d for d in base.rglob('*') if d.is_dir() and _is_label_dir(d)]
+
+def _common_parent(paths):
+    if not paths:
+        return None
+    common = os.path.commonpath([str(p) for p in paths])
+    return Path(common)
+
+def find_dataset_root(extracted: Path, fallback_root: Path):
+    label_dirs = _list_label_dirs(extracted)
+    if label_dirs:
+        parent = _common_parent([d.parent for d in label_dirs])
+        print(f"[INFO] DATASET_ROOT(auto): {parent}")
+        return parent
+    label_dirs = _list_label_dirs(fallback_root)
+    if label_dirs:
+        parent = _common_parent([d.parent for d in label_dirs])
+        print(f"[INFO] DATASET_ROOT(auto from DRIVE): {parent}")
+        return parent
+    raise FileNotFoundError("[ERROR] 'label_*' 또는 유사 폴더를 찾지 못했습니다.")
+
+DATASET_ROOT = find_dataset_root(EXTRACT_DIR, ROOT_DIR)
+
+# ========== 4) 라벨 매핑 자동화 + 안전 CSV 로딩 ==========
+def _infer_label_map(root: Path):
+    """
+    root 하위의 라벨 디렉토리를 자동 매핑:
+    - label_0 → 0, label_1 → 1 ...
+    - good/bad/positive/negative는 관례상 bad/negative=0, good/positive=1
+    - 나머지는 사전식 정렬 순으로 빈 ID 채움
+    """
+    subdirs = [d for d in sorted(root.iterdir()) if d.is_dir() and _is_label_dir(d)]
+    if not subdirs:
+        subdirs = sorted([d for d in root.rglob('*') if d.is_dir() and _is_label_dir(d)],
+                         key=lambda p: p.as_posix())
+    if not subdirs:
+        raise FileNotFoundError("[ERROR] 라벨 디렉토리를 찾지 못했습니다.")
+
+    mapping = {}
+    for d in subdirs:
+        name = d.name
+        m = re.match(r'^(?:label|class)_(\d+)$', name, flags=re.IGNORECASE)
+        if m:
+            y = int(m.group(1))
+        else:
+            order_bias = {'bad':0, 'negative':0, 'good':1, 'positive':1}
+            y = order_bias.get(name.lower(), None)
+        mapping[name] = y
+
+    used = {v for v in mapping.values() if v is not None}
+    next_ids = [i for i in range(len(mapping)) if i not in used]
+    for k in sorted([k for k,v in mapping.items() if v is None]):
+        mapping[k] = next_ids.pop(0)
+    return mapping
+
+def _read_csv_safely(path: Path, encoding_pref=('utf-8-sig', 'cp949', 'utf-8')):
+    last_err = None
+    for enc in encoding_pref:
+        try:
+            return pd.read_csv(path, encoding=enc)
+        except Exception as e:
+            last_err = e
+    try:
+        return pd.read_csv(path)
+    except Exception:
+        raise last_err
+
+def _normalize_name(s):
+    s = re.sub(r'[^A-Za-z0-9]+', ' ', str(s)).strip().lower()
+    return re.sub(r'\s+', ' ', s)
+
+# (옵션) Timestep 생성/보정
+def ensure_timestep(df: pd.DataFrame, fs=FS_DEFAULT):
+    # 이미 있으면 유지(첫 번째 후보를 'Timestep'으로 통일)
+    cand = [c for c in df.columns if _normalize_name(c) in
+            ['timestep', 'timestamp', 'time', 'time s', 't']]
+    if cand:
+        if 'Timestep' not in df.columns:
+            df = df.rename(columns={cand[0]: 'Timestep'})
+        return df
+    # 없으면 샘플 인덱스로 생성 (주의: 파일간 병합 후 절대시간은 아님)
+    n = len(df)
+    df['Timestep'] = np.arange(n) / float(fs)
+    return df
+
+def load_labeled_imu(root_dir: Path,
+                     label_map='auto',
+                     pattern=('*.csv', '*.CSV'),
+                     verbose=True,
+                     preview_files=5,
+                     create_timestep=False,
+                     fs_for_timestep=FS_DEFAULT):
+    root = Path(root_dir)
+    if not root.exists():
+        raise FileNotFoundError(f"[ERROR] 루트가 없습니다: {root}")
+
+    if label_map == 'auto':
+        label_map_used = _infer_label_map(root)
+    else:
+        label_map_used = dict(label_map)
+
+    print(f"[INFO] 라벨 매핑: {label_map_used}")
+
+    total_files, dfs = 0, []
+    for subdir_name, y in label_map_used.items():
+        d = root / subdir_name
+        if not (d.exists() and d.is_dir()):
+            print(f"[MISS] 폴더 없음: {d}")
+            continue
+
+        files = []
+        for pat in pattern:
+            files += list(d.glob(pat))
+        files = sorted(set(files))
+        n = len(files); total_files += n
+        print(f"[OK] {d.name} → {n}개 파일")
+        if verbose and n > 0:
+            for f in files[:preview_files]:
+                print(f"    • {f.name}")
+            if n > preview_files:
+                print(f"    • ... (총 {n}개)")
+
+        for f in files:
+            try:
+                df = _read_csv_safely(f)
+            except Exception as e:
+                print(f"[WARN] 읽기 실패: {f.name} ({e})"); continue
+
+            if create_timestep:
+                df = ensure_timestep(df, fs=fs_for_timestep)
+
+            df['label']       = y
+            df['source_file'] = f.name
+            df['source_dir']  = subdir_name
+            dfs.append(df)
+
+    if total_files == 0 or not dfs:
+        raise FileNotFoundError("[ERROR] CSV를 찾지 못했습니다. 경로/패턴을 확인하세요.")
+
+    data = pd.concat(dfs, axis=0, ignore_index=True, sort=False)
+
+    # 로딩 품질 점검 로그
+    cols_norm = {_normalize_name(c): c for c in data.columns}
+    move_candidates = [c for c in data.columns
+                       if _normalize_name(c) in ['ak','move','rep','segment','cycle','trial','action']]
+    acc_candidates  = [c for c in data.columns if any(k in _normalize_name(c) for k in ['acc','accelerometer'])]
+    gyr_candidates  = [c for c in data.columns if any(k in _normalize_name(c) for k in ['gyr','gyro'])]
+
+    print("\n[SUMMARY]")
+    print(f" - 총 CSV 파일 수: {total_files}개")
+    print(f" - 총 로우 수: {len(data):,}")
+    print(f" - 라벨 분포:\n{data['label'].value_counts(dropna=False).to_string()}")
+    if move_candidates:
+        print(f" - move 관련 열 후보: {move_candidates}")
+    else:
+        print(" - [WARN] move(AK) 열을 찾지 못했습니다. 전처리 전에 열 이름을 확인하세요.")
+    print(f" - 가속도 열 후보: {acc_candidates[:6]}")
+    print(f" - 자이로 열 후보: {gyr_candidates[:6]}")
+
+    return data, label_map_used
+
+# ========== 5) 실제 로딩 ==========
+imu_df, label_map_used = load_labeled_imu(
+    DATASET_ROOT,
+    label_map='auto',
+    pattern=('*.csv','*.CSV'),
+    verbose=True,
+    preview_files=5,
+    create_timestep=False,     # CSV에 시간열 없으면 True로 바꿔 FS_DEFAULT로 생성
+    fs_for_timestep=FS_DEFAULT
+)
+
+# ========== 6) (옵션) 업로드 CSV 폴백 병합 ==========
+# Colab 외부에서 개별 CSV를 둔 경우 병합 (label 열이 있어야 함)
+fallback_csvs  = [
+    Path('/mnt/data/IMU_Label_Plus_ALL.csv'),     # 있으면 사용
+    Path('/mnt/data/IMU_label_1_jungro.csv')      # 있으면 사용
+]
+fallback_exist = [p for p in fallback_csvs if p.exists()]
+if fallback_exist:
+    add_dfs = []
+    for p in fallback_exist:
+        try:
+            add_df = _read_csv_safely(p)
+            if 'label' not in add_df.columns:
+                print(f"[WARN] 폴백 {p.name}: 'label' 열이 없어 병합에서 제외")
+                continue
+            if 'source_file' not in add_df.columns:
+                add_df['source_file'] = p.name
+            if 'source_dir' not in add_df.columns:
+                add_df['source_dir'] = 'fallback'
+            # 옵션: 타임스탬프 생성
+            if 'Timestep' not in add_df.columns:
+                add_df = ensure_timestep(add_df, fs=FS_DEFAULT)
+            add_dfs.append(add_df)
+            print(f"[OK] 폴백 병합: {p.name} (rows={len(add_df)})")
+        except Exception as e:
+            print(f"[WARN] 폴백 읽기 실패: {p.name} ({e})")
+    if add_dfs:
+        imu_df = pd.concat([imu_df] + add_dfs, axis=0, ignore_index=True, sort=False)
+        print(f"[OK] 폴백 병합 완료 → 총 로우 {len(imu_df):,}")
+else:
+    print("[INFO] 폴백 CSV 없음(스킵)")
+
+# ========== 7) (선택) 기본 컬럼 표준화 힌트 ==========
+# 프로젝트에선 6채널(ax, ay, az, gx, gy, gz) 표준화를 권장.
+# 여기서는 자동 리네임 후보만 제시하고 실제 리네임은 사용자가 확인 후 적용.
+rename_hint = {}
+norm_cols = { _normalize_name(c): c for c in imu_df.columns }
+
+# 예시 후보 매핑(있으면 추천 출력)
+cands = {
+    'ax': ['ax', 'acc x', 'accx', 'imu ax', 'imu1 ax'],
+    'ay': ['ay', 'acc y', 'accy', 'imu ay', 'imu1 ay'],
+    'az': ['az', 'acc z', 'accz', 'imu az', 'imu1 az'],
+    'gx': ['gx', 'gyr x', 'gyrox', 'imu gx', 'imu1 gx'],
+    'gy': ['gy', 'gyr y', 'gyroy', 'imu gy', 'imu1 gy'],
+    'gz': ['gz', 'gyr z', 'gyroz', 'imu gz', 'imu1 gz'],
+}
+for std, keys in cands.items():
+    for k in keys:
+        if k in norm_cols:
+            rename_hint[std] = norm_cols[k]
+            break
+
+if rename_hint:
+    print("\n[HINT] 다음 컬럼을 아래처럼 리네임하는 것을 권장합니다(수동 확인 필요).")
+    for to_std, from_col in rename_hint.items():
+        print(f"  - '{from_col}'  →  '{to_std}'")
+    # 필요 시 실제 적용:
+    # imu_df = imu_df.rename(columns={v:k for k,v in rename_hint.items()})
+else:
+    print("\n[HINT] 6채널(ax,ay,az,gx,gy,gz) 컬럼 후보를 자동으로 찾지 못했습니다. 열 이름을 점검하세요.")
+
+# ========== 8) 병합본 저장 & 요약 리포트 ==========
+imu_df.to_csv(MERGED_CSV_PATH, index=False, encoding='utf-8-sig')
+meta = (
+    imu_df.groupby(['source_dir', 'label'], dropna=False)
+          .size().reset_index(name='rows')
+          .sort_values(['source_dir','label'])
+)
+meta.to_csv(META_CSV_PATH, index=False, encoding='utf-8-sig')
+
+summary = {
+    "rows": int(len(imu_df)),
+    "cols": [str(c) for c in imu_df.columns],
+    "label_counts": imu_df['label'].value_counts(dropna=False).to_dict(),
+    "by_source": meta.to_dict(orient='records')
+}
+with open(SUMMARY_JSON, 'w', encoding='utf-8') as f:
+    json.dump(summary, f, indent=2, ensure_ascii=False)
+
+print(f"\n[SAVED] 병합 CSV  → {MERGED_CSV_PATH}")
+print(f"[SAVED] 메타 CSV  → {META_CSV_PATH}")
+print(f"[SAVED] 요약 JSON → {SUMMARY_JSON}")
+
+print("\n[NEXT]")
+print("1) 위 병합본을 입력으로 EKF→MOVE 파이프라인을 실행하여")
+print("   /content/IMU_DATA_extracted/npz_from_ekf/ekf_move_L128_6ch.npz  (또는 9ch/12ch) 형식의 NPZ를 생성하세요.")
+print("2) 아래 TCN 학습 스크립트가 해당 NPZ를 읽어 80/10/10 MOVE 단위로 재분할하고 학습/리포트를 생성합니다.")
