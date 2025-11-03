@@ -24,11 +24,15 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-#include "imu_model.h"
-#include "imu_model_data.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "ai_platform.h"
+#include "imu_model.h"
+#include "imu_model_data.h"
+
 ai_handle imu_model = AI_HANDLE_NULL;  // ✅ 전역 선언 추가
+
 volatile int uartTxDone = 1;
 volatile bool sensingEnabled = false;  // 전역 변수
 volatile uint8_t action=0;
@@ -42,8 +46,19 @@ static volatile uint8_t activeBuf = 0;
 static volatile uint8_t uartDmaBusy = 0;
 #define MAX_FRAMES     256
 #define FRAME_CHANNELS 30
+/* ==== AI buffers in D2 (non-TCM), cache-line aligned ==== */
 __attribute__((section(".RAM_D2"), aligned(32)))
-static ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];
+static ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];   // 전역만 사용
+
+__attribute__((section(".RAM_D2"), aligned(32)))
+static float ai_input_buffer[128 * FRAME_CHANNELS];
+
+__attribute__((section(".RAM_D2"), aligned(32)))
+static float ai_output_buffer[AI_IMU_MODEL_OUT_1_SIZE];
+
+static ai_bool ai_created = false;
+static ai_bool ai_inited  = false;
+
 
 float imu_buffer[MAX_FRAMES][FRAME_CHANNELS];
 volatile uint16_t frame_count = 0;
@@ -119,89 +134,59 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void AI_Init(void)
-{
-    ai_error err;
-
-    // ✅ activation buffer (RAM 고정)
-    static AI_ALIGNED(4) ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];
-
-    // ✅ 네트워크 파라미터
-    ai_network_params params;
-
-    // ✅ 기본 파라미터 템플릿 로드
-    ai_imu_model_data_params_get(&params);
-
-    // ✅ 구조체 초기화 매크로를 이용해 weight/activation 연결
-    params.map_weights = AI_BUFFER_ARRAY_OBJ_INIT(
-        AI_FLAG_NONE,
-        1,
-        &AI_BUFFER_OBJ_INIT(
-            AI_BUFFER_FORMAT_U8,
-            1, 1,
-            AI_IMU_MODEL_DATA_WEIGHTS_SIZE,
-            1,
-            ai_imu_model_data_weights_get()
-        )
-    );
-
-    params.map_activations = AI_BUFFER_ARRAY_OBJ_INIT(
-        AI_FLAG_NONE,
-        1,
-        &AI_BUFFER_OBJ_INIT(
-            AI_BUFFER_FORMAT_U8,
-            1, 1,
-            AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE,
-            1,
-            activations
-        )
-    );
-
-    // ✅ 모델 초기화
-    if (!ai_imu_model_init(imu_model, &params)) {
-        err = ai_imu_model_get_error(imu_model);
-        printf("❌ ai_imu_model_init failed (type=%d code=%d)\r\n", err.type, err.code);
-        Error_Handler();
-    } else {
-        printf("✅ Model initialized successfully\r\n");
-    }
-}
 void AI_Create(void)
 {
-    ai_error err;
-
-    // 🔹 모델 생성
-    err = ai_imu_model_create(&imu_model, AI_IMU_MODEL_DATA_CONFIG);
+    if (ai_created) return;
+    ai_error err = ai_imu_model_create(&imu_model, AI_IMU_MODEL_DATA_CONFIG);
     if (err.type != AI_ERROR_NONE) {
         printf("❌ ai_imu_model_create failed (type=%d code=%d)\r\n", err.type, err.code);
         Error_Handler();
-    } else {
-        printf("✅ Model created successfully\r\n");
     }
+    ai_created = true;
+    printf("✅ Model created successfully\r\n");
 }
 
+void AI_Init(void)
+{
+    if (ai_inited) return;
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-braces"
+    const ai_network_params params = {
+        AI_IMU_MODEL_DATA_WEIGHTS(ai_imu_model_data_weights_get()),
+        AI_IMU_MODEL_DATA_ACTIVATIONS(activations)
+    };
+#pragma GCC diagnostic pop
+
+    ai_bool ok = ai_imu_model_init(imu_model, &params);
+    if (!ok) {
+        ai_error err = ai_imu_model_get_error(imu_model);
+        printf("❌ ai_imu_model_init failed (type=%d code=%d)\r\n", err.type, err.code);
+        Error_Handler();
+    }
+    ai_inited = true;
+    printf("✅ Model initialized successfully\r\n");
+}
+
+
+
+/* 3) run: ai_i32 반환 */
 void AI_Run(float *input_data, float *output_data)
 {
-    ai_i32 batch;
-    ai_buffer *ai_input;
-    ai_buffer *ai_output;
+    ai_buffer *ai_input  = ai_imu_model_inputs_get(imu_model, NULL);
+    ai_buffer *ai_output = ai_imu_model_outputs_get(imu_model, NULL);
 
-    // (1) 모델 입력/출력 구조 얻기
-    ai_input  = ai_imu_model_inputs_get(imu_model, NULL);
-    ai_output = ai_imu_model_outputs_get(imu_model, NULL);
+    ai_input[0].data  = (void*)input_data;
+    ai_output[0].data = (void*)output_data;
 
-    // (2) 실제 데이터 연결
-    ai_input[0].data  = AI_HANDLE_PTR(input_data);
-    ai_output[0].data = AI_HANDLE_PTR(output_data);
-
-    // (3) 추론 실행
-    batch = ai_imu_model_run(imu_model, ai_input, ai_output);
+    ai_i32 batch = ai_imu_model_run(imu_model, ai_input, ai_output);
     if (batch != 1) {
         ai_error err = ai_imu_model_get_error(imu_model);
-        printf("AI run error: type=%d, code=%d\r\n", err.type, err.code);
+        printf("❌ AI run error: type=%d, code=%d\r\n", err.type, err.code);
         Error_Handler();
     }
 }
+
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart == &huart1) {
@@ -218,6 +203,8 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     }
     */
 }
+
+
 
 static inline HAL_StatusTypeDef uart1_dma_printf(const uint8_t *data, uint16_t len, TickType_t wait)
 {
@@ -507,80 +494,64 @@ void IMU_MODEL(void *pvParameters)
 {
     for (;;)
     {
-        // ✅ recording_done 신호가 오면 추론 시작
         if (recording_done)
         {
             printf("🤖 [AI_MODEL] Processing inference...\r\n");
 
-            // 🔒 버퍼 접근 보호 (다른 Task가 덮어쓰지 않도록)
             xSemaphoreTake(imuSyncSem, portMAX_DELAY);
-
-            // 🔹 입력/출력 버퍼
-            float input_data[128 * FRAME_CHANNELS] = {0.0f};
-            float output_data[AI_IMU_MODEL_OUT_1_SIZE] = {0.0f};
-
-            // 🔹 현재 수집된 프레임 수 (지역 변수로 복사)
             uint16_t len = frame_count;
 
-            // 🔹 길이 보정
+            // 전역 입력 버퍼로 리샘플 + 정규화
             if (len > 128)
             {
-                // ① 축소 (선형 리샘플링)
                 for (int i = 0; i < 128; i++) {
                     int src = (int)((float)i / 128.0f * len);
                     for (int c = 0; c < FRAME_CHANNELS; c++)
-                        input_data[i*FRAME_CHANNELS + c] = imu_buffer[src][c] / 32768.0f;
+                        ai_input_buffer[i*FRAME_CHANNELS + c] = imu_buffer[src][c] / 32768.0f;
                 }
             }
             else
             {
-                // ② 패딩 (모자란 부분 0으로)
                 for (int i = 0; i < len; i++) {
                     for (int c = 0; c < FRAME_CHANNELS; c++)
-                        input_data[i*FRAME_CHANNELS + c] = imu_buffer[i][c] / 32768.0f;
+                        ai_input_buffer[i*FRAME_CHANNELS + c] = imu_buffer[i][c] / 32768.0f;
                 }
                 for (int i = len; i < 128; i++) {
                     for (int c = 0; c < FRAME_CHANNELS; c++)
-                        input_data[i*FRAME_CHANNELS + c] = 0.0f;
+                        ai_input_buffer[i*FRAME_CHANNELS + c] = 0.0f;
                 }
             }
-
-            // 🔓 버퍼 잠금 해제
             xSemaphoreGive(imuSyncSem);
 
-            // 🔹 추론 실행
-            AI_Run(input_data, output_data);
+            // 추론 실행 (전역 출력 버퍼 사용)
+            AI_Run(ai_input_buffer, ai_output_buffer);
 
-            // 🔹 출력 로그
             printf("AI Output:\r\n");
             for (int i = 0; i < AI_IMU_MODEL_OUT_1_SIZE; i++) {
-                printf("  [%d] = %.6f\r\n", i, output_data[i]);
+                printf("  [%d] = %.6f\r\n", i, ai_output_buffer[i]);
             }
 
-            // 🔹 결과 해석 (가장 높은 확률 클래스 찾기)
             int best_idx = 0;
-            float best_val = output_data[0];
+            float best_val = ai_output_buffer[0];
             for (int i = 1; i < AI_IMU_MODEL_OUT_1_SIZE; i++) {
-                if (output_data[i] > best_val) {
-                    best_val = output_data[i];
+                if (ai_output_buffer[i] > best_val) {
+                    best_val = ai_output_buffer[i];
                     best_idx = i;
                 }
             }
+            printf("➡️ Predicted class = %d (%.2f%%)\r\n", best_idx, best_val * 100.0f);
 
-            printf("➡️ Predicted class = %d (%.2f%%)\r\n",
-                   best_idx, best_val * 100.0f);
-
-            // 🔹 상태 초기화
-            frame_count = 0;
+            frame_count    = 0;
             recording_done = false;
-            sensingEnabled = false;  // 다음 버튼 눌러야 새 동작 시작
+            sensingEnabled = false;
 
             printf("[AI_MODEL] Done. Waiting for next motion.\r\n\n");
         }
 
-        vTaskDelay(pdMS_TO_TICKS(50));  // 주기적 체크
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -676,12 +647,16 @@ Error_Handler();
 
   imuSyncSem = xSemaphoreCreateMutex();
   configASSERT(imuSyncSem != NULL);
-  xTaskCreate(Read_imu1,"Read_imu1",512,NULL,2,NULL);
-  xTaskCreate(Read_imu2,"Read_imu2",512,NULL,2,NULL);
-  xTaskCreate(Read_imu3,"Read_imu3",512,NULL,2,NULL);
-  xTaskCreate(imu_store,"imu_store",512,NULL,2,NULL);
-  xTaskCreate(IMU_MODEL,"IMU_MODEL",1024,NULL,2,NULL);
+  xTaskCreate(Read_imu1,  "Read_imu1",  768,  NULL, 2, NULL);
+  xTaskCreate(Read_imu2,  "Read_imu2",  768,  NULL, 2, NULL);
+  xTaskCreate(Read_imu3,  "Read_imu3",  768,  NULL, 2, NULL);
+  xTaskCreate(imu_store,  "imu_store",  768,  NULL, 2, NULL);
+
+  /* IMU_MODEL은 printf/로컬 변수 많음 → 2048 words 권장 */
+  xTaskCreate(IMU_MODEL,  "IMU_MODEL",  2048, NULL, 2, NULL);
+
   imu_config_setting();
+
   AI_Create();
   AI_Init();
 
