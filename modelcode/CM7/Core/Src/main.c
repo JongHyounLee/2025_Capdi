@@ -30,6 +30,7 @@
 #include "ai_platform.h"
 #include "imu_model.h"
 #include "imu_model_data.h"
+#include "task.h"
 
 ai_handle imu_model = AI_HANDLE_NULL;  // ✅ 전역 선언 추가
 
@@ -552,6 +553,20 @@ void IMU_MODEL(void *pvParameters)
     }
 }
 
+
+void vApplicationMallocFailedHook(void)
+{
+    printf("!! MALLOC FAILED (heap exhausted) !!\r\n");
+    taskDISABLE_INTERRUPTS();
+    for(;;);
+}
+
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    printf("!! STACK OVERFLOW in %s !!\r\n", pcTaskName ? pcTaskName : "?");
+    taskDISABLE_INTERRUPTS();
+    for(;;);
+}
 /* USER CODE END 0 */
 
 /**
@@ -647,14 +662,27 @@ Error_Handler();
 
   imuSyncSem = xSemaphoreCreateMutex();
   configASSERT(imuSyncSem != NULL);
-  xTaskCreate(Read_imu1,  "Read_imu1",  768,  NULL, 2, NULL);
-  xTaskCreate(Read_imu2,  "Read_imu2",  768,  NULL, 2, NULL);
-  xTaskCreate(Read_imu3,  "Read_imu3",  768,  NULL, 2, NULL);
-  xTaskCreate(imu_store,  "imu_store",  768,  NULL, 2, NULL);
 
-  /* IMU_MODEL은 printf/로컬 변수 많음 → 2048 words 권장 */
-  xTaskCreate(IMU_MODEL,  "IMU_MODEL",  2048, NULL, 2, NULL);
+  // 실패 시 바로 알게 하기 (간단버전)
+  #define CREATE_TASK(fn, name, stack, prio)                                  \
+    do {                                                                       \
+      BaseType_t rc = xTaskCreate(fn, name, (stack), NULL, (prio), NULL);      \
+      if (rc != pdPASS) {                                                      \
+        printf("[TASK] create FAIL: %s\r\n", name);                            \
+        Error_Handler();                                                       \
+      } else {                                                                 \
+        printf("[TASK] create OK  : %s\r\n", name);                            \
+      }                                                                        \
+    } while (0)
 
+  // ---- 여기부터 네 코드 교체 ----
+  CREATE_TASK(Read_imu1,  "Read_imu1",  512, 2);
+  CREATE_TASK(Read_imu2,  "Read_imu2",  512, 2);
+  CREATE_TASK(Read_imu3,  "Read_imu3",  512, 2);
+  CREATE_TASK(imu_store,  "imu_store",  512, 2);
+
+  /* IMU_MODEL은 printf 많음 → 1536 words(=6KB)면 보통 충분 */
+  CREATE_TASK(IMU_MODEL,  "IMU_MODEL",  1536, 2);
   imu_config_setting();
 
   AI_Create();
