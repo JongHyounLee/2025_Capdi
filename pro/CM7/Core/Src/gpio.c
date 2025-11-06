@@ -92,7 +92,7 @@ void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, imu_cs1_Pin|imu_cs2_Pin|imu_cs3_Pin|imu_cs4_Pin
-                          |imu_cs5_Pin|imu_cs6_Pin, GPIO_PIN_RESET);
+                          |imu_cs5_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : PC1 PC4 PC5 */
   GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_4|GPIO_PIN_5;
@@ -135,11 +135,11 @@ void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : imu_cs1_Pin imu_cs2_Pin imu_cs3_Pin imu_cs4_Pin
-                           imu_cs5_Pin imu_cs6_Pin */
+                           imu_cs5_Pin */
   GPIO_InitStruct.Pin = imu_cs1_Pin|imu_cs2_Pin|imu_cs3_Pin|imu_cs4_Pin
-                          |imu_cs5_Pin|imu_cs6_Pin;
+                          |imu_cs5_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
