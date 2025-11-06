@@ -33,6 +33,7 @@
 volatile int uartTxDone = 1;
 volatile bool sensingEnabled = false;  // 전역 변수
 volatile uint8_t action=0;
+volatile uint8_t label=0;
 SemaphoreHandle_t uartMtx;          // UART 보호용 뮤텍스
 SemaphoreHandle_t uartTxDoneSem;    // DMA 완료 신호용 바이너리 세마포어
 #define UART_BUF_SIZE 1024   // 5개 IMU 데이터 한 줄 충분
@@ -358,7 +359,7 @@ void vTaskLogger(void *pvParameters)
                 "IMU2,%lu,%d,%d,%d,%d,%d,%d,"
                 "IMU3,%lu,%d,%d,%d,%d,%d,%d,"
                 "IMU4,%lu,%d,%d,%d,%d,%d,%d,"
-                "IMU5,%lu,%d,%d,%d,%d,%d,%d, move:%d\r\n",
+                "IMU5,%lu,%d,%d,%d,%d,%d,%d,move:%d,label:%d\r\n",
 
 
 				    (unsigned long)imuFrame.timestep,
@@ -383,7 +384,7 @@ void vTaskLogger(void *pvParameters)
 				    (int)imuFrame.imu_ax[4], (int)imuFrame.imu_ay[4], (int)imuFrame.imu_az[4],
 				    (int)imuFrame.imu_gx[4], (int)imuFrame.imu_gy[4], (int)imuFrame.imu_gz[4],
 
-				action
+				action,label
                 // 나머지 1~5번 IMU 동일하게
             );
 
