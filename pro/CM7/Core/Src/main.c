@@ -70,7 +70,24 @@ SemaphoreHandle_t dataReadySem;
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+// ===== Spike Killer (Median3 + Deglitch) =====================
+// ===== Spike Killer (Median3 + Deglitch) =====================
+#define IMU_MAX     6
+#define ACC_DMAX    3000   // 필요시 조정
+#define GYR_DMAX    4000   // 필요시 조정
+#define SPIKE_DBG   0
 
+typedef struct { int16_t x2, x1; } Prev2;
+
+static Prev2 accPrev[IMU_MAX][3] = {0};
+static Prev2 gyrPrev[IMU_MAX][3] = {0};
+static uint8_t accInit[IMU_MAX][3] = {0};   // 초기화 가드
+static uint8_t gyrInit[IMU_MAX][3] = {0};
+
+#if SPIKE_DBG
+static volatile uint32_t spikeCnt_acc[IMU_MAX][3] = {0};
+static volatile uint32_t spikeCnt_gyr[IMU_MAX][3] = {0};
+#endif
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -112,6 +129,67 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static inline int16_t med3(int16_t a, int16_t b, int16_t c){
+    if (a>b){int16_t t=a;a=b;b=t;}
+    if (b>c){int16_t t=b;b=c;c=t;}
+    if (a>b){int16_t t=a;a=b;b=t;}
+    return b;
+}
+
+static inline int16_t deglitch_core(int16_t m0, Prev2 *pv, int16_t dmax, volatile uint32_t *pcnt){
+    int32_t d1 = (int32_t)m0    - pv->x1;
+    int32_t d2 = (int32_t)pv->x1 - pv->x2;
+    if ((d1> dmax || d1< -dmax) && (d2<= dmax && d2>= -dmax)){
+        #if SPIKE_DBG
+        if (pcnt) (*pcnt)++;
+        #endif
+        m0 = pv->x1;
+    }
+    pv->x2 = pv->x1;
+    pv->x1 = m0;
+    return m0;
+}
+
+static inline int16_t filt_axis_acc(uint8_t imu, uint8_t axis, int16_t raw){
+    Prev2 *pv = &accPrev[imu][axis];
+    if (!accInit[imu][axis]) { pv->x1 = pv->x2 = raw; accInit[imu][axis] = 1; return raw; }
+    int16_t m = med3(raw, pv->x1, pv->x2);
+    #if SPIKE_DBG
+    return deglitch_core(m, pv, ACC_DMAX, &spikeCnt_acc[imu][axis]);
+    #else
+    return deglitch_core(m, pv, ACC_DMAX, NULL);
+    #endif
+}
+
+static inline int16_t filt_axis_gyr(uint8_t imu, uint8_t axis, int16_t raw){
+    Prev2 *pv = &gyrPrev[imu][axis];
+    if (!gyrInit[imu][axis]) { pv->x1 = pv->x2 = raw; gyrInit[imu][axis] = 1; return raw; }
+    int16_t m = med3(raw, pv->x1, pv->x2);
+    #if SPIKE_DBG
+    return deglitch_core(m, pv, GYR_DMAX, &spikeCnt_gyr[imu][axis]);
+    #else
+    return deglitch_core(m, pv, GYR_DMAX, NULL);
+    #endif
+}
+
+// ✅ volatile 포인터 지원 버전
+static inline void spike_filter_apply_v(uint8_t imu_id,
+    volatile int16_t *ax, volatile int16_t *ay, volatile int16_t *az,
+    volatile int16_t *gx, volatile int16_t *gy, volatile int16_t *gz)
+{
+    int16_t v;
+
+    v = *ax; v = filt_axis_acc(imu_id,0,v); *ax = v;
+    v = *ay; v = filt_axis_acc(imu_id,1,v); *ay = v;
+    v = *az; v = filt_axis_acc(imu_id,2,v); *az = v;
+
+    v = *gx; v = filt_axis_gyr(imu_id,0,v); *gx = v;
+    v = *gy; v = filt_axis_gyr(imu_id,1,v); *gy = v;
+    v = *gz; v = filt_axis_gyr(imu_id,2,v); *gz = v;
+}
+/*----------------------------------------------------------------------------------*/
+
+
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
@@ -312,6 +390,11 @@ void Read_imu1(void *pvParameters)
             imuFrame.imu_gz[0] = (int16_t)((buf[12]<<8)|buf[13]);
 
             imuFrame.tick[0] = tick_now; // tick 저장
+            // ... 기존 파싱 코드 바로 아래에 추가
+            // IMU1 읽은 직후
+            spike_filter_apply_v(0,
+                &imuFrame.imu_ax[0], &imuFrame.imu_ay[0], &imuFrame.imu_az[0],
+                &imuFrame.imu_gx[0], &imuFrame.imu_gy[0], &imuFrame.imu_gz[0]);
 
 
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
@@ -327,6 +410,10 @@ void Read_imu1(void *pvParameters)
 	        imuFrame.imu_gz[1] = (int16_t)((buf[12]<<8)|buf[13]);
 
 	        imuFrame.tick[1] = tick_now; // tick 저장 (같은 시점)
+	        // IMU2 읽은 직후
+	        spike_filter_apply_v(1,
+	            &imuFrame.imu_ax[1], &imuFrame.imu_ay[1], &imuFrame.imu_az[1],
+	            &imuFrame.imu_gx[1], &imuFrame.imu_gy[1], &imuFrame.imu_gz[1]);
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
 	        vTaskDelay(pdMS_TO_TICKS(20));
@@ -426,6 +513,9 @@ void Read_imu2(void *pvParameters)
             imuFrame.imu_gz[2] = (int16_t)((buf[12]<<8)|buf[13]);
 
             imuFrame.tick[2] = tick_now; // tick 저장
+            spike_filter_apply_v(2,
+                &imuFrame.imu_ax[2], &imuFrame.imu_ay[2], &imuFrame.imu_az[2],
+                &imuFrame.imu_gx[2], &imuFrame.imu_gy[2], &imuFrame.imu_gz[2]);
 
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
@@ -440,6 +530,10 @@ void Read_imu2(void *pvParameters)
 	        imuFrame.imu_gz[3] = (int16_t)((buf[12]<<8)|buf[13]);
 
             imuFrame.tick[3] = tick_now; // tick 저장 (같은 시점)
+
+            spike_filter_apply_v(3,
+                &imuFrame.imu_ax[3], &imuFrame.imu_ay[3], &imuFrame.imu_az[3],
+                &imuFrame.imu_gx[3], &imuFrame.imu_gy[3], &imuFrame.imu_gz[3]);
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
 
@@ -480,6 +574,11 @@ void Read_imu3(void *pvParameters)
             imuFrame.imu_gz[4] = (int16_t)((buf[12]<<8)|buf[13]);
 
             imuFrame.tick[4] = tick_now; // tick 저장
+
+            spike_filter_apply_v(4,
+                &imuFrame.imu_ax[4], &imuFrame.imu_ay[4], &imuFrame.imu_az[4],
+                &imuFrame.imu_gx[4], &imuFrame.imu_gy[4], &imuFrame.imu_gz[4]);
+
 /*
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi3, &reg, 1, HAL_MAX_DELAY);

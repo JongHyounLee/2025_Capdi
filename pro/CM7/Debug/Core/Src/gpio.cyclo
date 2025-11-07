@@ -1,2 +1,2 @@
 ../Core/Src/gpio.c:36:6:HAL_GPIO_EXTI_Callback	4
-../Core/Src/gpio.c:80:6:MX_GPIO_Init	1
+../Core/Src/gpio.c:71:6:MX_GPIO_Init	1
