@@ -36,7 +36,7 @@
 volatile int uartTxDone = 1;
 volatile bool sensingEnabled = false;  // 전역 변수
 volatile uint8_t action=0;
-volatile uint8_t label=0;
+volatile uint8_t label=3;
 SemaphoreHandle_t uartMtx;          // UART 보호용 뮤텍스
 SemaphoreHandle_t uartTxDoneSem;    // DMA 완료 신호용 바이너리 세마포어
 #define UART_BUF_SIZE 1024   // 5개 IMU 데이터 한 줄 충분
