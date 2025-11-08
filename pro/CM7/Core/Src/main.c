@@ -28,6 +28,8 @@
 #include "FreeRTOS.h"
 #include "semphr.h"   // ✅ 세마포어 관련 함수 선언 (필수)
 #include "task.h"
+#include <stdint.h>
+#include <stdbool.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 volatile int uartTxDone = 1;
@@ -70,24 +72,39 @@ SemaphoreHandle_t dataReadySem;
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-// ===== Spike Killer (Median3 + Deglitch) =====================
-// ===== Spike Killer (Median3 + Deglitch) =====================
-#define IMU_MAX     6
-#define ACC_DMAX    3000   // 필요시 조정
-#define GYR_DMAX    4000   // 필요시 조정
-#define SPIKE_DBG   0
+#define IMU_MAX 6
 
-typedef struct { int16_t x2, x1; } Prev2;
+// ---- median5용 원형 버퍼(아주 작은 창, 스파이크만 깎음)
+typedef struct {
+    int16_t buf[5];
+    uint8_t idx, count;
+} Ring5;
 
-static Prev2 accPrev[IMU_MAX][3] = {0};
-static Prev2 gyrPrev[IMU_MAX][3] = {0};
-static uint8_t accInit[IMU_MAX][3] = {0};   // 초기화 가드
-static uint8_t gyrInit[IMU_MAX][3] = {0};
+static Ring5 accRing[IMU_MAX][3] = {0};
+static Ring5 gyrRing[IMU_MAX][3] = {0};
 
-#if SPIKE_DBG
-static volatile uint32_t spikeCnt_acc[IMU_MAX][3] = {0};
-static volatile uint32_t spikeCnt_gyr[IMU_MAX][3] = {0};
-#endif
+// ---- 한 샘플당 허용 변화량 제한(slew limiter)용 이전 출력값
+static int16_t accPrevOut[IMU_MAX][3] = {0};
+static int16_t gyrPrevOut[IMU_MAX][3] = {0};
+static uint8_t accOutInit[IMU_MAX][3] = {0};
+static uint8_t gyrOutInit[IMU_MAX][3] = {0};
+
+// ---- 로그에서 뽑아온 per-axis DMAX(제안치) --- IMU1..5 → 인덱스 0..4
+static const int16_t DMAX_A[IMU_MAX][3] = {
+    {20000, 14078, 10605},
+    {20000, 20000, 13367},
+    {20000, 20000, 11907},
+    {20000, 20000, 20000},
+    {19955, 20000, 20000},
+};
+
+static const int16_t DMAX_G[IMU_MAX][3] = {
+    { 9352, 20000, 10566},
+    {20000, 20000, 20000},
+    {20000, 20000, 20000},
+    { 9904, 20000, 17124},
+    {11575, 20000, 12460},
+};
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -129,64 +146,72 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static inline int16_t med3(int16_t a, int16_t b, int16_t c){
-    if (a>b){int16_t t=a;a=b;b=t;}
-    if (b>c){int16_t t=b;b=c;c=t;}
-    if (a>b){int16_t t=a;a=b;b=t;}
-    return b;
+// 정렬 5개(작아서 O(1)이라 부담 거의 없음)
+static inline int16_t median5_local(int16_t *v){
+    int16_t a=v[0],b=v[1],c=v[2],d=v[3],e=v[4],t;
+    if(a>b){t=a;a=b;b=t;} if(c>d){t=c;c=d;d=t;}
+    if(a>c){t=a;a=c;c=t;} if(b>d){t=b;b=d;d=t;}
+    if(b>c){t=b;b=c;c=t;} if(d>e){t=d;d=e;e=t;}
+    if(c>d){t=c;c=d;d=t;}
+    return c; // 중앙값
 }
 
-static inline int16_t deglitch_core(int16_t m0, Prev2 *pv, int16_t dmax, volatile uint32_t *pcnt){
-    int32_t d1 = (int32_t)m0    - pv->x1;
-    int32_t d2 = (int32_t)pv->x1 - pv->x2;
-    if ((d1> dmax || d1< -dmax) && (d2<= dmax && d2>= -dmax)){
-        #if SPIKE_DBG
-        if (pcnt) (*pcnt)++;
-        #endif
-        m0 = pv->x1;
+static inline int16_t median5_push_get(Ring5 *r, int16_t x){
+    r->buf[r->idx] = x; r->idx = (r->idx+1)%5; if(r->count<5) r->count++;
+    if(r->count<3){ // 웜업: 샘플 적으면 그때그때 평균/직전값
+        return x;
+    }else{
+        int16_t tmp[5]; for(int i=0;i<5;i++) tmp[i]=r->buf[i];
+        return median5_local(tmp);
     }
-    pv->x2 = pv->x1;
-    pv->x1 = m0;
-    return m0;
 }
 
-static inline int16_t filt_axis_acc(uint8_t imu, uint8_t axis, int16_t raw){
-    Prev2 *pv = &accPrev[imu][axis];
-    if (!accInit[imu][axis]) { pv->x1 = pv->x2 = raw; accInit[imu][axis] = 1; return raw; }
-    int16_t m = med3(raw, pv->x1, pv->x2);
-    #if SPIKE_DBG
-    return deglitch_core(m, pv, ACC_DMAX, &spikeCnt_acc[imu][axis]);
-    #else
-    return deglitch_core(m, pv, ACC_DMAX, NULL);
-    #endif
+// Slew-rate limiter: 한 샘플에서 허용 변화량을 넘으면 잘라서 보냄
+static inline int16_t slew_limit(int16_t prev_out, int16_t curr, int16_t dmax){
+    int32_t d = (int32_t)curr - (int32_t)prev_out;
+    if(d >  dmax) return prev_out + dmax;
+    if(d < -dmax) return prev_out - dmax;
+    return curr;
 }
-
-static inline int16_t filt_axis_gyr(uint8_t imu, uint8_t axis, int16_t raw){
-    Prev2 *pv = &gyrPrev[imu][axis];
-    if (!gyrInit[imu][axis]) { pv->x1 = pv->x2 = raw; gyrInit[imu][axis] = 1; return raw; }
-    int16_t m = med3(raw, pv->x1, pv->x2);
-    #if SPIKE_DBG
-    return deglitch_core(m, pv, GYR_DMAX, &spikeCnt_gyr[imu][axis]);
-    #else
-    return deglitch_core(m, pv, GYR_DMAX, NULL);
-    #endif
-}
-
-// ✅ volatile 포인터 지원 버전
 static inline void spike_filter_apply_v(uint8_t imu_id,
     volatile int16_t *ax, volatile int16_t *ay, volatile int16_t *az,
     volatile int16_t *gx, volatile int16_t *gy, volatile int16_t *gz)
 {
-    int16_t v;
+    // 1) 아주 짧은 median5로 단발성·소수 샘플 스파이크 제거
+    int16_t mx = median5_push_get(&accRing[imu_id][0], *ax);
+    int16_t my = median5_push_get(&accRing[imu_id][1], *ay);
+    int16_t mz = median5_push_get(&accRing[imu_id][2], *az);
 
-    v = *ax; v = filt_axis_acc(imu_id,0,v); *ax = v;
-    v = *ay; v = filt_axis_acc(imu_id,1,v); *ay = v;
-    v = *az; v = filt_axis_acc(imu_id,2,v); *az = v;
+    int16_t rx = median5_push_get(&gyrRing[imu_id][0], *gx);
+    int16_t ry = median5_push_get(&gyrRing[imu_id][1], *gy);
+    int16_t rz = median5_push_get(&gyrRing[imu_id][2], *gz);
 
-    v = *gx; v = filt_axis_gyr(imu_id,0,v); *gx = v;
-    v = *gy; v = filt_axis_gyr(imu_id,1,v); *gy = v;
-    v = *gz; v = filt_axis_gyr(imu_id,2,v); *gz = v;
+    // 2) Slew-rate limit: 동작은 통과, “한 번에” 너무 큰 점프만 자름
+    //    (웜업 시에는 그냥 통과)
+    if(!accOutInit[imu_id][0]){ accPrevOut[imu_id][0]=mx; accOutInit[imu_id][0]=1; }
+    if(!accOutInit[imu_id][1]){ accPrevOut[imu_id][1]=my; accOutInit[imu_id][1]=1; }
+    if(!accOutInit[imu_id][2]){ accPrevOut[imu_id][2]=mz; accOutInit[imu_id][2]=1; }
+    if(!gyrOutInit[imu_id][0]){ gyrPrevOut[imu_id][0]=rx; gyrOutInit[imu_id][0]=1; }
+    if(!gyrOutInit[imu_id][1]){ gyrPrevOut[imu_id][1]=ry; gyrOutInit[imu_id][1]=1; }
+    if(!gyrOutInit[imu_id][2]){ gyrPrevOut[imu_id][2]=rz; gyrOutInit[imu_id][2]=1; }
+
+    int16_t ox = slew_limit(accPrevOut[imu_id][0], mx, DMAX_A[imu_id][0]);
+    int16_t oy = slew_limit(accPrevOut[imu_id][1], my, DMAX_A[imu_id][1]);
+    int16_t oz = slew_limit(accPrevOut[imu_id][2], mz, DMAX_A[imu_id][2]);
+
+    int16_t px = slew_limit(gyrPrevOut[imu_id][0], rx, DMAX_G[imu_id][0]);
+    int16_t py = slew_limit(gyrPrevOut[imu_id][1], ry, DMAX_G[imu_id][1]);
+    int16_t pz = slew_limit(gyrPrevOut[imu_id][2], rz, DMAX_G[imu_id][2]);
+
+    accPrevOut[imu_id][0] = ox; *ax = ox;
+    accPrevOut[imu_id][1] = oy; *ay = oy;
+    accPrevOut[imu_id][2] = oz; *az = oz;
+
+    gyrPrevOut[imu_id][0] = px; *gx = px;
+    gyrPrevOut[imu_id][1] = py; *gy = py;
+    gyrPrevOut[imu_id][2] = pz; *gz = pz;
 }
+
 /*----------------------------------------------------------------------------------*/
 
 
@@ -238,22 +263,28 @@ static inline HAL_StatusTypeDef uart1_dma_printf(const uint8_t *data, uint16_t l
 
 void imu_config_setting(void)
 {
-    uint8_t resetData[2]  = {0x6B, 0x80};  // 리셋
-    uint8_t wakeData[2]   = {0x6B, 0x01};  // 슬립 해제 + PLL 클록
-    uint8_t disableI2C[2] = {0x6A, 0x10};  // I2C 비활성화
-    uint8_t configData[2] = {0x1A, 0x03};  // DLPF_CFG = 3
-    uint8_t pwr2Data[2]   = {0x6C, 0x00};  // 모든 축 활성화
+    // ── 공통 레지스터 값 ─────────────────────────────────────────────────────
+    uint8_t smplrtDiv[2]   = {0x19, 19};   // 1000/(1+19)=50 Hz
+    uint8_t gyroCfg[2]     = {0x1B, 0x18}; // ±2000 dps
+    uint8_t accelCfg[2]    = {0x1C, 0x10}; // ±8 g
+    uint8_t accelDlpf[2]   = {0x1D, 0x03}; // ACCEL DLPF=3(≈45 Hz)
 
-    // ---------------- IMU1 ----------------
+    uint8_t resetData[2]   = {0x6B, 0x80}; // PWR_MGMT_1: reset
+    uint8_t wakeData[2]    = {0x6B, 0x01}; // PWR_MGMT_1: CLK=PLL, sleep off
+    uint8_t disableI2C[2]  = {0x6A, 0x10}; // USER_CTRL : I2C_IF_DIS=1
+    uint8_t configData[2]  = {0x1A, 0x03}; // CONFIG    : GYRO DLPF=3
+    uint8_t pwr2Data[2]    = {0x6C, 0x00}; // PWR_MGMT_2: 모든 축 활성화
+
+    // ---------------- IMU1 (SPI1, PD0) ----------------
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, resetData, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, disableI2C, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, wakeData, 2, HAL_MAX_DELAY);
@@ -264,20 +295,36 @@ void imu_config_setting(void)
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
-    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
+    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);  // GYRO DLPF
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
 
-    // ---------------- IMU2 ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, gyroCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, accelCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, accelDlpf, 2, HAL_MAX_DELAY);   // ACCEL DLPF
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, smplrtDiv, 2, HAL_MAX_DELAY);   // 최종 샘플링=50Hz
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // ---------------- IMU2 (SPI1, PD1) ----------------
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, resetData, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, disableI2C, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, wakeData, 2, HAL_MAX_DELAY);
@@ -290,18 +337,34 @@ void imu_config_setting(void)
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
 
-    // ---------------- IMU3 ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, gyroCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, accelCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, accelDlpf, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, smplrtDiv, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // ---------------- IMU3 (SPI2, PD2) ----------------
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, resetData, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, disableI2C, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, wakeData, 2, HAL_MAX_DELAY);
@@ -314,18 +377,34 @@ void imu_config_setting(void)
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, configData, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
 
-    // ---------------- IMU4 ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, gyroCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, accelCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, accelDlpf, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, smplrtDiv, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // ---------------- IMU4 (SPI2, PD3) ----------------
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, resetData, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, disableI2C, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, wakeData, 2, HAL_MAX_DELAY);
@@ -338,18 +417,34 @@ void imu_config_setting(void)
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, configData, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
 
-    // ---------------- IMU5 ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, gyroCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, accelCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, accelDlpf, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, smplrtDiv, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // ---------------- IMU5 (SPI3, PD4) ----------------
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, resetData, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, disableI2C, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, wakeData, 2, HAL_MAX_DELAY);
@@ -362,7 +457,24 @@ void imu_config_setting(void)
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, configData, 2, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, gyroCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, accelCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, accelDlpf, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, smplrtDiv, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
 }
+
 
 void Read_imu1(void *pvParameters)
 {
@@ -574,7 +686,6 @@ void Read_imu3(void *pvParameters)
             imuFrame.imu_gz[4] = (int16_t)((buf[12]<<8)|buf[13]);
 
             imuFrame.tick[4] = tick_now; // tick 저장
-
             spike_filter_apply_v(4,
                 &imuFrame.imu_ax[4], &imuFrame.imu_ay[4], &imuFrame.imu_az[4],
                 &imuFrame.imu_gx[4], &imuFrame.imu_gy[4], &imuFrame.imu_gz[4]);
