@@ -30,6 +30,7 @@
 #include "task.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdlib.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 volatile int uartTxDone = 1;
@@ -72,39 +73,54 @@ SemaphoreHandle_t dataReadySem;
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+// ---- EMA 상태 & 변화율 평균(|Δ|) 추적 ----
 #define IMU_MAX 6
+static int16_t emaA[IMU_MAX][3] = {0}, emaG[IMU_MAX][3] = {0};
+static uint8_t emaInitA[IMU_MAX][3] = {0}, emaInitG[IMU_MAX][3] = {0};
 
-// ---- median5용 원형 버퍼(아주 작은 창, 스파이크만 깎음)
-typedef struct {
-    int16_t buf[5];
-    uint8_t idx, count;
-} Ring5;
+// |Δ|의 EMA(평균 변화량) → 동적 스파이크 임계값 산출용
+static int32_t dEmaA[IMU_MAX][3] = {0}, dEmaG[IMU_MAX][3] = {0};
 
+// ---- 튜닝 파라미터(고정소수점처럼 분자/분모로 표현) ----
+#define EMA_NUM      1    // α = 1/4 = 0.25  (LPF 강도)
+#define EMA_DEN      4
+#define DEMA_NUM     1    // 변화율의 EMA αd = 1/8 = 0.125
+#define DEMA_DEN     8
+#define K_SPIKE      8    // 스파이크 판정 계수(평균 변화량의 K배 초과 시 스파이크)
+#define ALLAX_JUMP   12000// 3축 동시 점프 판정(가속도 LSB 기준, 필요시 조정)
+
+
+// median(5)용 링버퍼
+typedef struct { int16_t buf[5]; uint8_t idx, count; } Ring5;
 static Ring5 accRing[IMU_MAX][3] = {0};
 static Ring5 gyrRing[IMU_MAX][3] = {0};
 
-// ---- 한 샘플당 허용 변화량 제한(slew limiter)용 이전 출력값
+// slew-limit & 초기화 플래그
 static int16_t accPrevOut[IMU_MAX][3] = {0};
 static int16_t gyrPrevOut[IMU_MAX][3] = {0};
 static uint8_t accOutInit[IMU_MAX][3] = {0};
 static uint8_t gyrOutInit[IMU_MAX][3] = {0};
 
-// ---- 로그에서 뽑아온 per-axis DMAX(제안치) --- IMU1..5 → 인덱스 0..4
+// per-axis DMAX (가속/자이로 변화량 제한)
 static const int16_t DMAX_A[IMU_MAX][3] = {
-    {20000, 14078, 10605},
-    {20000, 20000, 13367},
-    {20000, 20000, 11907},
-    {20000, 20000, 20000},
-    {19955, 20000, 20000},
+    {4000,4000,4000},{4000,4000,4000},{4000,4000,4000},
+    {4000,4000,4000},{4000,4000,4000},{4000,4000,4000}
+};
+static const int16_t DMAX_G[IMU_MAX][3] = {
+    {8000,8000,8000},{8000,8000,8000},{8000,8000,8000},
+    {8000,8000,8000},{8000,8000,8000},{8000,8000,8000}
 };
 
-static const int16_t DMAX_G[IMU_MAX][3] = {
-    { 9352, 20000, 10566},
-    {20000, 20000, 20000},
-    {20000, 20000, 20000},
-    { 9904, 20000, 17124},
-    {11575, 20000, 12460},
-};
+// median5
+
+static int16_t postBufA[IMU_MAX][3][3] = {0};
+static int16_t postBufG[IMU_MAX][3][3] = {0};
+static uint8_t postIdxA[IMU_MAX][3] = {0}, postIdxG[IMU_MAX][3] = {0};
+static inline int16_t med3_local(int16_t *v){
+    int16_t a=v[0],b=v[1],c=v[2],t;
+    if(a>b){t=a;a=b;b=t;} if(b>c){t=b;b=c;c=t;} // a<=b<=c
+    return b;
+}
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -146,48 +162,117 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-// 정렬 5개(작아서 O(1)이라 부담 거의 없음)
-static inline int16_t median5_local(int16_t *v){
-    int16_t a=v[0],b=v[1],c=v[2],d=v[3],e=v[4],t;
-    if(a>b){t=a;a=b;b=t;} if(c>d){t=c;c=d;d=t;}
-    if(a>c){t=a;a=c;c=t;} if(b>d){t=b;b=d;d=t;}
-    if(b>c){t=b;b=c;c=t;} if(d>e){t=d;d=e;e=t;}
-    if(c>d){t=c;c=d;d=t;}
-    return c; // 중앙값
+static inline int16_t ema_step(int16_t prev, int16_t curr){
+    // y = (1-α)*prev + α*curr, α=EMA_NUM/EMA_DEN
+    return (int16_t)(((int32_t)(EMA_DEN-EMA_NUM)*prev + (int32_t)EMA_NUM*curr) / EMA_DEN);
 }
 
-static inline int16_t median5_push_get(Ring5 *r, int16_t x){
-    r->buf[r->idx] = x; r->idx = (r->idx+1)%5; if(r->count<5) r->count++;
-    if(r->count<3){ // 웜업: 샘플 적으면 그때그때 평균/직전값
-        return x;
+static inline int32_t ema_step_i32(int32_t prev, int32_t curr_abs){
+    // |Δ|의 EMA (정수)
+    return ((int64_t)(DEMA_DEN - DEMA_NUM) * prev + (int64_t)DEMA_NUM * curr_abs) / DEMA_DEN;
+}
+
+static inline int16_t clamp_dynamic(int16_t prev_ref, int16_t curr, int32_t mean_delta){
+    // mean_delta가 너무 작으면 최소값 보장
+    if (mean_delta < 1) mean_delta = 1;
+    int32_t d = (int32_t)curr - (int32_t)prev_ref;
+    int32_t th = (int32_t)K_SPIKE * mean_delta;
+    if (d >  th) return prev_ref;       // 상향 스파이크 → 유지
+    if (d < -th) return prev_ref;       // 하향 스파이크 → 유지
+    return curr;                        // 정상 변화 → 통과
+}
+
+static inline uint8_t three_axis_jump(int16_t px,int16_t py,int16_t pz,
+                                      int16_t x, int16_t y, int16_t z){
+    // 3축이 동시에 크게 튈 때(접촉/EMI 의심) → 이전값 유지
+    return ( (abs(x-px) > ALLAX_JUMP) &&
+             (abs(y-py) > ALLAX_JUMP) &&
+             (abs(z-pz) > ALLAX_JUMP) );
+}
+
+// 작은 포스트 median(3) - latency +1 샘플
+
+static inline int16_t median5_local(int16_t *v)
+{
+    // v[0..4] 5개 값 정렬 후 중앙값 반환
+    int16_t a[5];
+    memcpy(a, v, sizeof(a));
+    for (int i=0;i<5;i++)
+        for (int j=i+1;j<5;j++)
+            if (a[i] > a[j]) { int16_t t=a[i]; a[i]=a[j]; a[j]=t; }
+    return a[2];
+}
+
+static inline int16_t median5_push_get(Ring5 *r, int16_t x)
+{
+    r->buf[r->idx++] = x; if (r->idx >= 5) r->idx = 0;
+    if (r->count < 5) r->count++;
+
+    int16_t tmp[5];
+    for (uint8_t i=0;i<r->count;i++) tmp[i] = r->buf[i];
+
+    // r->count<5인 초기 구간도 중앙값 취급(간단 삽입정렬)
+    for (uint8_t i=1;i<r->count;i++) {
+        int16_t key = tmp[i];
+        int8_t j = i-1;
+        while (j>=0 && tmp[j] > key) { tmp[j+1] = tmp[j]; j--; }
+        tmp[j+1] = key;
+    }
+    return tmp[r->count/2];
+}
+static inline int16_t post_med3_push(uint8_t id, uint8_t axis, int16_t x, uint8_t isGyro){
+    if(isGyro){
+        postBufG[id][axis][postIdxG[id][axis]++] = x;
+        postIdxG[id][axis] %= 3;
+        return med3_local(postBufG[id][axis]);
     }else{
-        int16_t tmp[5]; for(int i=0;i<5;i++) tmp[i]=r->buf[i];
-        return median5_local(tmp);
+        postBufA[id][axis][postIdxA[id][axis]++] = x;
+        postIdxA[id][axis] %= 3;
+        return med3_local(postBufA[id][axis]);
     }
 }
 
-// Slew-rate limiter: 한 샘플에서 허용 변화량을 넘으면 잘라서 보냄
-static inline int16_t slew_limit(int16_t prev_out, int16_t curr, int16_t dmax){
-    int32_t d = (int32_t)curr - (int32_t)prev_out;
-    if(d >  dmax) return prev_out + dmax;
-    if(d < -dmax) return prev_out - dmax;
-    return curr;
+static inline int16_t slew_limit(int16_t prev, int16_t curr, int16_t dmax)
+{
+    int32_t diff = (int32_t)curr - (int32_t)prev;
+    if (diff > dmax) diff = dmax;
+    else if (diff < -dmax) diff = -dmax;
+    return (int16_t)(prev + diff);
 }
+
+static inline int32_t iabs32(int32_t x) { return (x < 0) ? -x : x; }
+// 작은 포스트 median(3) - latency +1 샘플
+
 static inline void spike_filter_apply_v(uint8_t imu_id,
     volatile int16_t *ax, volatile int16_t *ay, volatile int16_t *az,
     volatile int16_t *gx, volatile int16_t *gy, volatile int16_t *gz)
 {
-    // 1) 아주 짧은 median5로 단발성·소수 샘플 스파이크 제거
+    // ── 0) 센서 포화/비정상 값 가드 (선택) ─────────────────
+    if ((*ax == INT16_MAX) || (*ax == INT16_MIN) ||
+        (*ay == INT16_MAX) || (*ay == INT16_MIN) ||
+        (*az == INT16_MAX) || (*az == INT16_MIN) ) {
+        // 바로 이전 출력으로 롤백
+        *ax = accPrevOut[imu_id][0];
+        *ay = accPrevOut[imu_id][1];
+        *az = accPrevOut[imu_id][2];
+    }
+    if ((*gx == INT16_MAX) || (*gx == INT16_MIN) ||
+        (*gy == INT16_MAX) || (*gy == INT16_MIN) ||
+        (*gz == INT16_MAX) || (*gz == INT16_MIN) ) {
+        *gx = gyrPrevOut[imu_id][0];
+        *gy = gyrPrevOut[imu_id][1];
+        *gz = gyrPrevOut[imu_id][2];
+    }
+
+    // ── 1) very-short median(5) : 단발 스파이크 제거 ───────
     int16_t mx = median5_push_get(&accRing[imu_id][0], *ax);
     int16_t my = median5_push_get(&accRing[imu_id][1], *ay);
     int16_t mz = median5_push_get(&accRing[imu_id][2], *az);
-
     int16_t rx = median5_push_get(&gyrRing[imu_id][0], *gx);
     int16_t ry = median5_push_get(&gyrRing[imu_id][1], *gy);
     int16_t rz = median5_push_get(&gyrRing[imu_id][2], *gz);
 
-    // 2) Slew-rate limit: 동작은 통과, “한 번에” 너무 큰 점프만 자름
-    //    (웜업 시에는 그냥 통과)
+    // ── 2) Slew-limit : 한 번에 큰 점프 제한(기존) ────────
     if(!accOutInit[imu_id][0]){ accPrevOut[imu_id][0]=mx; accOutInit[imu_id][0]=1; }
     if(!accOutInit[imu_id][1]){ accPrevOut[imu_id][1]=my; accOutInit[imu_id][1]=1; }
     if(!accOutInit[imu_id][2]){ accPrevOut[imu_id][2]=mz; accOutInit[imu_id][2]=1; }
@@ -195,21 +280,75 @@ static inline void spike_filter_apply_v(uint8_t imu_id,
     if(!gyrOutInit[imu_id][1]){ gyrPrevOut[imu_id][1]=ry; gyrOutInit[imu_id][1]=1; }
     if(!gyrOutInit[imu_id][2]){ gyrPrevOut[imu_id][2]=rz; gyrOutInit[imu_id][2]=1; }
 
-    int16_t ox = slew_limit(accPrevOut[imu_id][0], mx, DMAX_A[imu_id][0]);
-    int16_t oy = slew_limit(accPrevOut[imu_id][1], my, DMAX_A[imu_id][1]);
-    int16_t oz = slew_limit(accPrevOut[imu_id][2], mz, DMAX_A[imu_id][2]);
+    int16_t sx = slew_limit(accPrevOut[imu_id][0], mx, DMAX_A[imu_id][0]);
+    int16_t sy = slew_limit(accPrevOut[imu_id][1], my, DMAX_A[imu_id][1]);
+    int16_t sz = slew_limit(accPrevOut[imu_id][2], mz, DMAX_A[imu_id][2]);
+    int16_t tx = slew_limit(gyrPrevOut[imu_id][0], rx, DMAX_G[imu_id][0]);
+    int16_t ty = slew_limit(gyrPrevOut[imu_id][1], ry, DMAX_G[imu_id][1]);
+    int16_t tz = slew_limit(gyrPrevOut[imu_id][2], rz, DMAX_G[imu_id][2]);
 
-    int16_t px = slew_limit(gyrPrevOut[imu_id][0], rx, DMAX_G[imu_id][0]);
-    int16_t py = slew_limit(gyrPrevOut[imu_id][1], ry, DMAX_G[imu_id][1]);
-    int16_t pz = slew_limit(gyrPrevOut[imu_id][2], rz, DMAX_G[imu_id][2]);
+    // ── 3) 3축 동시 점프(접촉/EMI) 차단 ─────────────────────
+    if (three_axis_jump(accPrevOut[imu_id][0], accPrevOut[imu_id][1], accPrevOut[imu_id][2], sx, sy, sz)) {
+        sx = accPrevOut[imu_id][0]; sy = accPrevOut[imu_id][1]; sz = accPrevOut[imu_id][2];
+    }
+    if (three_axis_jump(gyrPrevOut[imu_id][0], gyrPrevOut[imu_id][1], gyrPrevOut[imu_id][2], tx, ty, tz)) {
+        tx = gyrPrevOut[imu_id][0]; ty = gyrPrevOut[imu_id][1]; tz = gyrPrevOut[imu_id][2];
+    }
 
-    accPrevOut[imu_id][0] = ox; *ax = ox;
-    accPrevOut[imu_id][1] = oy; *ay = oy;
-    accPrevOut[imu_id][2] = oz; *az = oz;
+    // ── 4) 동적 스파이크 클램프 (평균 변화량 기반) ──────────
+    // ref는 EMA 이전의 "직전 출력"을 사용하면 안정적
+    int16_t refAx = accPrevOut[imu_id][0], refAy = accPrevOut[imu_id][1], refAz = accPrevOut[imu_id][2];
+    int16_t refGx = gyrPrevOut[imu_id][0], refGy = gyrPrevOut[imu_id][1], refGz = gyrPrevOut[imu_id][2];
 
-    gyrPrevOut[imu_id][0] = px; *gx = px;
-    gyrPrevOut[imu_id][1] = py; *gy = py;
-    gyrPrevOut[imu_id][2] = pz; *gz = pz;
+    // 평균 변화량 업데이트
+    dEmaA[imu_id][0] = ema_step_i32(dEmaA[imu_id][0], iabs32((int32_t)sx - refAx));
+    dEmaA[imu_id][1] = ema_step_i32(dEmaA[imu_id][1], iabs32((int32_t)sy - refAy));
+    dEmaA[imu_id][2] = ema_step_i32(dEmaA[imu_id][2], iabs32((int32_t)sz - refAz));
+    dEmaG[imu_id][0] = ema_step_i32(dEmaG[imu_id][0], iabs32((int32_t)tx - refGx));
+    dEmaG[imu_id][1] = ema_step_i32(dEmaG[imu_id][1], iabs32((int32_t)ty - refGy));
+    dEmaG[imu_id][2] = ema_step_i32(dEmaG[imu_id][2], iabs32((int32_t)tz - refGz));
+
+
+    sx = clamp_dynamic(refAx, sx, dEmaA[imu_id][0]);
+    sy = clamp_dynamic(refAy, sy, dEmaA[imu_id][1]);
+    sz = clamp_dynamic(refAz, sz, dEmaA[imu_id][2]);
+    tx = clamp_dynamic(refGx, tx, dEmaG[imu_id][0]);
+    ty = clamp_dynamic(refGy, ty, dEmaG[imu_id][1]);
+    tz = clamp_dynamic(refGz, tz, dEmaG[imu_id][2]);
+
+    // ── 5) 1차 LPF(EMA) : 잔진동/스파크 스무딩 ─────────────
+    if(!emaInitA[imu_id][0]){ emaA[imu_id][0]=sx; emaInitA[imu_id][0]=1; }
+    if(!emaInitA[imu_id][1]){ emaA[imu_id][1]=sy; emaInitA[imu_id][1]=1; }
+    if(!emaInitA[imu_id][2]){ emaA[imu_id][2]=sz; emaInitA[imu_id][2]=1; }
+    if(!emaInitG[imu_id][0]){ emaG[imu_id][0]=tx; emaInitG[imu_id][0]=1; }
+    if(!emaInitG[imu_id][1]){ emaG[imu_id][1]=ty; emaInitG[imu_id][1]=1; }
+    if(!emaInitG[imu_id][2]){ emaG[imu_id][2]=tz; emaInitG[imu_id][2]=1; }
+
+    int16_t fx = ema_step(emaA[imu_id][0], sx);
+    int16_t fy = ema_step(emaA[imu_id][1], sy);
+    int16_t fz = ema_step(emaA[imu_id][2], sz);
+    int16_t gx2= ema_step(emaG[imu_id][0], tx);
+    int16_t gy2= ema_step(emaG[imu_id][1], ty);
+    int16_t gz2= ema_step(emaG[imu_id][2], tz);
+
+    // ── 6) 포스트 median3 : 마지막 미세 스파이크 컷 ────────
+    fx  = post_med3_push(imu_id, 0, fx, 0);
+    fy  = post_med3_push(imu_id, 1, fy, 0);
+    fz  = post_med3_push(imu_id, 2, fz, 0);
+    gx2 = post_med3_push(imu_id, 0, gx2, 1);
+    gy2 = post_med3_push(imu_id, 1, gy2, 1);
+    gz2 = post_med3_push(imu_id, 2, gz2, 1);
+
+    // 상태/출력 갱신
+    accPrevOut[imu_id][0]=fx; *ax = fx;
+    accPrevOut[imu_id][1]=fy; *ay = fy;
+    accPrevOut[imu_id][2]=fz; *az = fz;
+    gyrPrevOut[imu_id][0]=gx2; *gx = gx2;
+    gyrPrevOut[imu_id][1]=gy2; *gy = gy2;
+    gyrPrevOut[imu_id][2]=gz2; *gz = gz2;
+
+    emaA[imu_id][0]=fx; emaA[imu_id][1]=fy; emaA[imu_id][2]=fz;
+    emaG[imu_id][0]=gx2; emaG[imu_id][1]=gy2; emaG[imu_id][2]=gz2;
 }
 
 /*----------------------------------------------------------------------------------*/
