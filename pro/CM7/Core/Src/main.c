@@ -528,7 +528,6 @@ void Read_imu1(void *pvParameters)
 	            &imuFrame.imu_gx[1], &imuFrame.imu_gy[1], &imuFrame.imu_gz[1]);
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
-	        vTaskDelay(pdMS_TO_TICKS(20));
 
     	}
 
@@ -649,7 +648,6 @@ void Read_imu2(void *pvParameters)
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
 
-	        vTaskDelay(pdMS_TO_TICKS(20));
 
     	}
 
@@ -707,7 +705,6 @@ void Read_imu3(void *pvParameters)
 */
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
 
-	        vTaskDelay(pdMS_TO_TICKS(20));
 
     	}
 
