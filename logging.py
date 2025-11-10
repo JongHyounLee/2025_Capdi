@@ -9,7 +9,7 @@ import re
 
 # ====== 설정 ======
 PORT = "COM3"          # 시리얼 포트
-BAUD = 115200          # 보드레이트
+BAUD = 921600          # 보드레이트
 SAVE_DIR = r"C:\Users\hjl99\Desktop\과제\캡디"
 
 os.makedirs(SAVE_DIR, exist_ok=True)
