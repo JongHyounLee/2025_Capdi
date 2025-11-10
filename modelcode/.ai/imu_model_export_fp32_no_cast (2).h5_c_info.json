@@ -46,7 +46,7 @@
       "mpool_id": 1,
       "name": "head_fc_dense_bias_array",
       "nbits": 32,
-      "offset_start": 484800,
+      "offset_start": 498624,
       "qmn": {},
       "shape": [
         96
@@ -100,7 +100,7 @@
       "mpool_id": 1,
       "name": "head_fc_dense_weights_array",
       "nbits": 32,
-      "offset_start": 466368,
+      "offset_start": 480192,
       "qmn": {},
       "shape": [
         96,
@@ -156,7 +156,7 @@
       "mpool_id": 1,
       "name": "pred_dense_bias_array",
       "nbits": 32,
-      "offset_start": 485952,
+      "offset_start": 499776,
       "qmn": {},
       "shape": [
         2
@@ -210,7 +210,7 @@
       "mpool_id": 1,
       "name": "pred_dense_weights_array",
       "nbits": 32,
-      "offset_start": 485184,
+      "offset_start": 499008,
       "qmn": {},
       "shape": [
         2,
@@ -266,7 +266,7 @@
       "mpool_id": 1,
       "name": "stem_conv_bias_array",
       "nbits": 32,
-      "offset_start": 3456,
+      "offset_start": 17280,
       "qmn": {},
       "shape": [
         48
@@ -322,12 +322,12 @@
       "mpool_id": 0,
       "name": "stem_conv_scratch0_array",
       "nbits": 32,
-      "offset_start": 31848,
+      "offset_start": 31752,
       "qmn": {},
       "shape": [
         3,
         1,
-        6,
+        30,
         1
       ],
       "shape_map": [
@@ -336,7 +336,7 @@
         "CH",
         "CH_IN"
       ],
-      "size_bytes": 72
+      "size_bytes": 360
     },
     {
       "alignment": 4,
@@ -361,7 +361,7 @@
         48,
         3,
         1,
-        6
+        30
       ],
       "shape_map": [
         "CH",
@@ -369,7 +369,7 @@
         "W",
         "CH_IN"
       ],
-      "size_bytes": 3456
+      "size_bytes": 17280
     },
     {
       "alignment": 4,
@@ -446,7 +446,7 @@
       "mpool_id": 1,
       "name": "tcn1_conv1_bias_array",
       "nbits": 32,
-      "offset_start": 49728,
+      "offset_start": 63552,
       "qmn": {},
       "shape": [
         48
@@ -535,7 +535,7 @@
       "mpool_id": 1,
       "name": "tcn1_conv1_weights_array",
       "nbits": 32,
-      "offset_start": 3648,
+      "offset_start": 17472,
       "qmn": {},
       "shape": [
         48,
@@ -568,7 +568,7 @@
       "mpool_id": 1,
       "name": "tcn1_conv2_bias_array",
       "nbits": 32,
-      "offset_start": 96000,
+      "offset_start": 109824,
       "qmn": {},
       "shape": [
         48
@@ -657,7 +657,7 @@
       "mpool_id": 1,
       "name": "tcn1_conv2_weights_array",
       "nbits": 32,
-      "offset_start": 49920,
+      "offset_start": 63744,
       "qmn": {},
       "shape": [
         48,
@@ -777,7 +777,7 @@
       "mpool_id": 1,
       "name": "tcn2_conv1_bias_array",
       "nbits": 32,
-      "offset_start": 142272,
+      "offset_start": 156096,
       "qmn": {},
       "shape": [
         48
@@ -833,7 +833,7 @@
       "mpool_id": 1,
       "name": "tcn2_conv1_weights_array",
       "nbits": 32,
-      "offset_start": 96192,
+      "offset_start": 110016,
       "qmn": {},
       "shape": [
         48,
@@ -866,7 +866,7 @@
       "mpool_id": 1,
       "name": "tcn2_conv2_bias_array",
       "nbits": 32,
-      "offset_start": 188544,
+      "offset_start": 202368,
       "qmn": {},
       "shape": [
         48
@@ -922,7 +922,7 @@
       "mpool_id": 1,
       "name": "tcn2_conv2_weights_array",
       "nbits": 32,
-      "offset_start": 142464,
+      "offset_start": 156288,
       "qmn": {},
       "shape": [
         48,
@@ -1042,7 +1042,7 @@
       "mpool_id": 1,
       "name": "tcn3_conv1_bias_array",
       "nbits": 32,
-      "offset_start": 234816,
+      "offset_start": 248640,
       "qmn": {},
       "shape": [
         48
@@ -1098,7 +1098,7 @@
       "mpool_id": 1,
       "name": "tcn3_conv1_weights_array",
       "nbits": 32,
-      "offset_start": 188736,
+      "offset_start": 202560,
       "qmn": {},
       "shape": [
         48,
@@ -1131,7 +1131,7 @@
       "mpool_id": 1,
       "name": "tcn3_conv2_bias_array",
       "nbits": 32,
-      "offset_start": 281088,
+      "offset_start": 294912,
       "qmn": {},
       "shape": [
         48
@@ -1187,7 +1187,7 @@
       "mpool_id": 1,
       "name": "tcn3_conv2_weights_array",
       "nbits": 32,
-      "offset_start": 235008,
+      "offset_start": 248832,
       "qmn": {},
       "shape": [
         48,
@@ -1307,7 +1307,7 @@
       "mpool_id": 1,
       "name": "tcn4_conv1_bias_array",
       "nbits": 32,
-      "offset_start": 327360,
+      "offset_start": 341184,
       "qmn": {},
       "shape": [
         48
@@ -1363,7 +1363,7 @@
       "mpool_id": 1,
       "name": "tcn4_conv1_weights_array",
       "nbits": 32,
-      "offset_start": 281280,
+      "offset_start": 295104,
       "qmn": {},
       "shape": [
         48,
@@ -1396,7 +1396,7 @@
       "mpool_id": 1,
       "name": "tcn4_conv2_bias_array",
       "nbits": 32,
-      "offset_start": 373632,
+      "offset_start": 387456,
       "qmn": {},
       "shape": [
         48
@@ -1452,7 +1452,7 @@
       "mpool_id": 1,
       "name": "tcn4_conv2_weights_array",
       "nbits": 32,
-      "offset_start": 327552,
+      "offset_start": 341376,
       "qmn": {},
       "shape": [
         48,
@@ -1572,7 +1572,7 @@
       "mpool_id": 1,
       "name": "tcn5_conv1_bias_array",
       "nbits": 32,
-      "offset_start": 419904,
+      "offset_start": 433728,
       "qmn": {},
       "shape": [
         48
@@ -1628,7 +1628,7 @@
       "mpool_id": 1,
       "name": "tcn5_conv1_weights_array",
       "nbits": 32,
-      "offset_start": 373824,
+      "offset_start": 387648,
       "qmn": {},
       "shape": [
         48,
@@ -1661,7 +1661,7 @@
       "mpool_id": 1,
       "name": "tcn5_conv2_bias_array",
       "nbits": 32,
-      "offset_start": 466176,
+      "offset_start": 480000,
       "qmn": {},
       "shape": [
         48
@@ -1717,7 +1717,7 @@
       "mpool_id": 1,
       "name": "tcn5_conv2_weights_array",
       "nbits": 32,
-      "offset_start": 420096,
+      "offset_start": 433920,
       "qmn": {},
       "shape": [
         48,
@@ -1808,72 +1808,72 @@
       "mpool_id": 0,
       "name": "x_output_array",
       "nbits": 32,
-      "offset_start": 28776,
+      "offset_start": 16392,
       "qmn": {},
       "shape": [
         128,
-        6
+        30
       ],
       "shape_map": [
         "H",
         "CH"
       ],
-      "size_bytes": 3072
+      "size_bytes": 15360
     }
   ],
   "environment": {
     "generated_model": {
-      "generated_time": "2025-11-01T20:42:27+0900",
+      "generated_time": "2025-11-03T22:53:45+0900",
       "model_files": [
         {
           "name": "imu_model_data_params.h",
-          "signature": "0x4d813a170451d0860a430e730e98d563"
+          "signature": "0xb09ca122de9b9ae5b938987fab6fc1d7"
         },
         {
           "name": "imu_model_data_params.c",
-          "signature": "0x6a24e0d77e38640639eaf13ac6caded5"
+          "signature": "0x3c2779a0afbbe80ae4fcc0ad7a5f643b"
         },
         {
           "name": "imu_model_data.h",
-          "signature": "0x9dcf851974af82954dc80ffe393e82c4"
+          "signature": "0x0378394d3a66129efd151c4f12ad3773"
         },
         {
           "name": "imu_model_data.c",
-          "signature": "0xb8756943dfa48982355802ae46b9e737"
+          "signature": "0x116d2107aad62230820f189fb0295dc5"
         },
         {
           "name": "imu_model_config.h",
-          "signature": "0xb91a3db7e3ab9a2cee0302253dc2bcf8"
+          "signature": "0xd386781bcf1160166740c269d6df3a5f"
         },
         {
           "name": "imu_model.h",
-          "signature": "0x7aa6ed68e10715ea3fc74271b33873ae"
+          "signature": "0x0c3f6bdb6027c0c317287a936bfc0cbe"
         },
         {
           "name": "imu_model.c",
-          "signature": "0xd8c5a42bb9913abb9c53c39f174eca77"
+          "signature": "0xa55f22dc931ad743fb03bf7fe11ae917"
         }
       ],
       "name": "imu_model"
     },
-    "network_signature": "0x1d4ed0b1f318aed7",
+    "network_signature": "0xa16f184c0fb30e3c",
     "test_name": "",
     "tools": [
       {
-        "arguments": "generate --target stm32h7 --name imu_model -m C:/Users/hjl99/Desktop/IMU_model/export_fp32_no_cast.h5 --compression none --verbosity 1 --workspace C:/Users/hjl99/AppData/Local/Temp/mxAI_workspace44567860913870014010248223334980381 --output C:/Users/hjl99/.stm32cubemx/imu_model_output",
+        "arguments": "generate --target stm32h7 --name imu_model -m C:/Users/hjl99/Desktop/IMU_model/export_fp32_no_cast (2).h5 --compression none --verbosity 1 --workspace C:/Users/hjl99/AppData/Local/Temp/mxAI_workspace626362022961300995247755062668834 --output C:/Users/hjl99/.stm32cubemx/imu_model_output",
         "environment": [
           "STATS_TYPE=X-CUBE-AI"
         ],
         "input_model": {
           "model_files": [
             {
-              "name": "export_fp32_no_cast.h5",
-              "signature": "0xd8800482decc9e061da6add171f3baef"
+              "name": "export_fp32_no_cast (2).h5",
+              "signature": "0x48ffa7951e5b2d4b175369304792296c"
             }
           ],
-          "n_params": 122546,
-          "name": "export_fp32_no_cast",
-          "size": 490184,
+          "n_params": 126002,
+          "name": "export_fp32_no_cast_2",
+          "size": 504008,
           "type": "keras"
         },
         "name": "ST.EdgeAI.Core",
@@ -2393,7 +2393,7 @@
       "inputs": [
         388
       ],
-      "name": "export_fp32_no_cast",
+      "name": "export_fp32_no_cast_2",
       "nodes": [
         {
           "attributes": {
@@ -2417,7 +2417,7 @@
             454,
             457
           ],
-          "macc": 110640,
+          "macc": 553008,
           "mapping": "NODE_SW",
           "name": "stem_conv",
           "original_nodes": [
@@ -3335,7 +3335,7 @@
           "shape": [
             null,
             128,
-            6
+            30
           ],
           "shape_map": [
             "BATCH",
@@ -3377,13 +3377,13 @@
       0,
       0
     ],
-    "kernel_flash": 23454,
+    "kernel_flash": 23446,
     "kernel_ram": 8960,
     "series": "stm32h7",
     "toolchain": "arm-none-eabi-gcc (GNU Tools for STM32 13.3.rel1.20240926-1715) 13.3.1 20240614",
     "toolchain_flash": 646,
     "toolchain_ram": 0,
-    "weights": 485960
+    "weights": 499784
   },
   "memory_pools": [
     {
@@ -3486,7 +3486,7 @@
       "rights": "ACC_READ",
       "size_bytes": -1,
       "subpools": [],
-      "used_size_bytes": 485960,
+      "used_size_bytes": 499784,
       "user_allocated": false,
       "virtual": false
     }

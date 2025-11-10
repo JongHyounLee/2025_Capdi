@@ -24,11 +24,22 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-#include "imu_model.h"
-#include "imu_model_data.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <string.h>
+#include "ai_platform.h"
+#include "imu_model.h"
+#include "imu_model_data.h"
+#include "task.h"
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h>
+/* === add: headers === */
+#include <math.h>   // floorf, fabsf
+
 ai_handle imu_model = AI_HANDLE_NULL;  // ✅ 전역 선언 추가
+
 volatile int uartTxDone = 1;
 volatile bool sensingEnabled = false;  // 전역 변수
 volatile uint8_t action=0;
@@ -41,9 +52,28 @@ SemaphoreHandle_t imuSyncSem;   // IMU 버퍼 보호용 세마포어
 static volatile uint8_t activeBuf = 0;
 static volatile uint8_t uartDmaBusy = 0;
 #define MAX_FRAMES     256
-#define FRAME_CHANNELS 30
+#ifndef L_TARGET
+#define L_TARGET        100      // 🔁 128 → 100
+#endif
+#ifndef FRAME_CHANNELS
+#define FRAME_CHANNELS  30
+#endif
+
+/* ==== AI buffers in D2 (non-TCM), cache-line aligned ==== */
 __attribute__((section(".RAM_D2"), aligned(32)))
-static ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];
+static ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];   // 전역만 사용
+
+
+__attribute__((section(".RAM_D2"), aligned(32)))
+static float ai_input_buffer[L_TARGET * FRAME_CHANNELS]; // 🔁 128*30 → L_TARGET*FRAME_CHANNELS
+__attribute__((section(".RAM_D2"), aligned(32)))
+static float ai_output_buffer[AI_IMU_MODEL_OUT_1_SIZE];
+#if (AI_IMU_MODEL_IN_1_SIZE != (L_TARGET * FRAME_CHANNELS))
+#error "Network input size mismatch: AI_IMU_MODEL_IN_1_SIZE != L_TARGET*FRAME_CHANNELS"
+#endif
+static ai_bool ai_created = false;
+static ai_bool ai_inited  = false;
+
 
 float imu_buffer[MAX_FRAMES][FRAME_CHANNELS];
 volatile uint16_t frame_count = 0;
@@ -78,6 +108,57 @@ SemaphoreHandle_t dataReadySem;
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+
+
+
+// ---- EMA 상태 & 변화율 평균(|Δ|) 추적 ----
+#define IMU_MAX 6
+static int16_t emaA[IMU_MAX][3] = {0}, emaG[IMU_MAX][3] = {0};
+static uint8_t emaInitA[IMU_MAX][3] = {0}, emaInitG[IMU_MAX][3] = {0};
+
+// |Δ|의 EMA(평균 변화량) → 동적 스파이크 임계값 산출용
+static int32_t dEmaA[IMU_MAX][3] = {0}, dEmaG[IMU_MAX][3] = {0};
+
+// ---- 튜닝 파라미터(고정소수점처럼 분자/분모로 표현) ----
+#define EMA_NUM      1    // α = 1/4 = 0.25  (LPF 강도)
+#define EMA_DEN      4
+#define DEMA_NUM     1    // 변화율의 EMA αd = 1/8 = 0.125
+#define DEMA_DEN     8
+#define K_SPIKE      8    // 스파이크 판정 계수(평균 변화량의 K배 초과 시 스파이크)
+#define ALLAX_JUMP   12000// 3축 동시 점프 판정(가속도 LSB 기준, 필요시 조정)
+
+
+// median(5)용 링버퍼
+typedef struct { int16_t buf[5]; uint8_t idx, count; } Ring5;
+static Ring5 accRing[IMU_MAX][3] = {0};
+static Ring5 gyrRing[IMU_MAX][3] = {0};
+
+// slew-limit & 초기화 플래그
+static int16_t accPrevOut[IMU_MAX][3] = {0};
+static int16_t gyrPrevOut[IMU_MAX][3] = {0};
+static uint8_t accOutInit[IMU_MAX][3] = {0};
+static uint8_t gyrOutInit[IMU_MAX][3] = {0};
+
+// per-axis DMAX (가속/자이로 변화량 제한)
+static const int16_t DMAX_A[IMU_MAX][3] = {
+    {4000,4000,4000},{4000,4000,4000},{4000,4000,4000},
+    {4000,4000,4000},{4000,4000,4000},{4000,4000,4000}
+};
+static const int16_t DMAX_G[IMU_MAX][3] = {
+    {8000,8000,8000},{8000,8000,8000},{8000,8000,8000},
+    {8000,8000,8000},{8000,8000,8000},{8000,8000,8000}
+};
+
+// median5
+
+static int16_t postBufA[IMU_MAX][3][3] = {0};
+static int16_t postBufG[IMU_MAX][3][3] = {0};
+static uint8_t postIdxA[IMU_MAX][3] = {0}, postIdxG[IMU_MAX][3] = {0};
+static inline int16_t med3_local(int16_t *v){
+    int16_t a=v[0],b=v[1],c=v[2],t;
+    if(a>b){t=a;a=b;b=t;} if(b>c){t=b;b=c;c=t;} // a<=b<=c
+    return b;
+}
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -119,89 +200,294 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void AI_Init(void)
-{
-    ai_error err;
 
-    // ✅ activation buffer (RAM 고정)
-    static AI_ALIGNED(4) ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];
-
-    // ✅ 네트워크 파라미터
-    ai_network_params params;
-
-    // ✅ 기본 파라미터 템플릿 로드
-    ai_imu_model_data_params_get(&params);
-
-    // ✅ 구조체 초기화 매크로를 이용해 weight/activation 연결
-    params.map_weights = AI_BUFFER_ARRAY_OBJ_INIT(
-        AI_FLAG_NONE,
-        1,
-        &AI_BUFFER_OBJ_INIT(
-            AI_BUFFER_FORMAT_U8,
-            1, 1,
-            AI_IMU_MODEL_DATA_WEIGHTS_SIZE,
-            1,
-            ai_imu_model_data_weights_get()
-        )
-    );
-
-    params.map_activations = AI_BUFFER_ARRAY_OBJ_INIT(
-        AI_FLAG_NONE,
-        1,
-        &AI_BUFFER_OBJ_INIT(
-            AI_BUFFER_FORMAT_U8,
-            1, 1,
-            AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE,
-            1,
-            activations
-        )
-    );
-
-    // ✅ 모델 초기화
-    if (!ai_imu_model_init(imu_model, &params)) {
-        err = ai_imu_model_get_error(imu_model);
-        printf("❌ ai_imu_model_init failed (type=%d code=%d)\r\n", err.type, err.code);
-        Error_Handler();
-    } else {
-        printf("✅ Model initialized successfully\r\n");
-    }
-}
-void AI_Create(void)
-{
-    ai_error err;
-
-    // 🔹 모델 생성
-    err = ai_imu_model_create(&imu_model, AI_IMU_MODEL_DATA_CONFIG);
-    if (err.type != AI_ERROR_NONE) {
-        printf("❌ ai_imu_model_create failed (type=%d code=%d)\r\n", err.type, err.code);
-        Error_Handler();
-    } else {
-        printf("✅ Model created successfully\r\n");
-    }
+static inline int16_t ema_step(int16_t prev, int16_t curr){
+    // y = (1-α)*prev + α*curr, α=EMA_NUM/EMA_DEN
+    return (int16_t)(((int32_t)(EMA_DEN-EMA_NUM)*prev + (int32_t)EMA_NUM*curr) / EMA_DEN);
 }
 
-void AI_Run(float *input_data, float *output_data)
+static inline int32_t ema_step_i32(int32_t prev, int32_t curr_abs){
+    // |Δ|의 EMA (정수)
+    return ((int64_t)(DEMA_DEN - DEMA_NUM) * prev + (int64_t)DEMA_NUM * curr_abs) / DEMA_DEN;
+}
+
+static inline int16_t clamp_dynamic(int16_t prev_ref, int16_t curr, int32_t mean_delta){
+    // mean_delta가 너무 작으면 최소값 보장
+    if (mean_delta < 1) mean_delta = 1;
+    int32_t d = (int32_t)curr - (int32_t)prev_ref;
+    int32_t th = (int32_t)K_SPIKE * mean_delta;
+    if (d >  th) return prev_ref;       // 상향 스파이크 → 유지
+    if (d < -th) return prev_ref;       // 하향 스파이크 → 유지
+    return curr;                        // 정상 변화 → 통과
+}
+
+static inline uint8_t three_axis_jump(int16_t px,int16_t py,int16_t pz,
+                                      int16_t x, int16_t y, int16_t z){
+    // 3축이 동시에 크게 튈 때(접촉/EMI 의심) → 이전값 유지
+    return ( (abs(x-px) > ALLAX_JUMP) &&
+             (abs(y-py) > ALLAX_JUMP) &&
+             (abs(z-pz) > ALLAX_JUMP) );
+}
+
+// 작은 포스트 median(3) - latency +1 샘플
+
+static inline int16_t median5_local(int16_t *v)
 {
-    ai_i32 batch;
-    ai_buffer *ai_input;
-    ai_buffer *ai_output;
+    // v[0..4] 5개 값 정렬 후 중앙값 반환
+    int16_t a[5];
+    memcpy(a, v, sizeof(a));
+    for (int i=0;i<5;i++)
+        for (int j=i+1;j<5;j++)
+            if (a[i] > a[j]) { int16_t t=a[i]; a[i]=a[j]; a[j]=t; }
+    return a[2];
+}
 
-    // (1) 모델 입력/출력 구조 얻기
-    ai_input  = ai_imu_model_inputs_get(imu_model, NULL);
-    ai_output = ai_imu_model_outputs_get(imu_model, NULL);
+static inline int16_t median5_push_get(Ring5 *r, int16_t x)
+{
+    r->buf[r->idx++] = x; if (r->idx >= 5) r->idx = 0;
+    if (r->count < 5) r->count++;
 
-    // (2) 실제 데이터 연결
-    ai_input[0].data  = AI_HANDLE_PTR(input_data);
-    ai_output[0].data = AI_HANDLE_PTR(output_data);
+    int16_t tmp[5];
+    for (uint8_t i=0;i<r->count;i++) tmp[i] = r->buf[i];
 
-    // (3) 추론 실행
-    batch = ai_imu_model_run(imu_model, ai_input, ai_output);
-    if (batch != 1) {
-        ai_error err = ai_imu_model_get_error(imu_model);
-        printf("AI run error: type=%d, code=%d\r\n", err.type, err.code);
-        Error_Handler();
+    // r->count<5인 초기 구간도 중앙값 취급(간단 삽입정렬)
+    for (uint8_t i=1;i<r->count;i++) {
+        int16_t key = tmp[i];
+        int8_t j = i-1;
+        while (j>=0 && tmp[j] > key) { tmp[j+1] = tmp[j]; j--; }
+        tmp[j+1] = key;
+    }
+    return tmp[r->count/2];
+}
+static inline int16_t post_med3_push(uint8_t id, uint8_t axis, int16_t x, uint8_t isGyro){
+    if(isGyro){
+        postBufG[id][axis][postIdxG[id][axis]++] = x;
+        postIdxG[id][axis] %= 3;
+        return med3_local(postBufG[id][axis]);
+    }else{
+        postBufA[id][axis][postIdxA[id][axis]++] = x;
+        postIdxA[id][axis] %= 3;
+        return med3_local(postBufA[id][axis]);
     }
 }
+
+static inline int16_t slew_limit(int16_t prev, int16_t curr, int16_t dmax)
+{
+    int32_t diff = (int32_t)curr - (int32_t)prev;
+    if (diff > dmax) diff = dmax;
+    else if (diff < -dmax) diff = -dmax;
+    return (int16_t)(prev + diff);
+}
+
+static inline int32_t iabs32(int32_t x) { return (x < 0) ? -x : x; }
+// 작은 포스트 median(3) - latency +1 샘플
+
+static inline void spike_filter_apply_v(uint8_t imu_id,
+    volatile int16_t *ax, volatile int16_t *ay, volatile int16_t *az,
+    volatile int16_t *gx, volatile int16_t *gy, volatile int16_t *gz)
+{
+    // ── 0) 센서 포화/비정상 값 가드 (선택) ─────────────────
+    if ((*ax == INT16_MAX) || (*ax == INT16_MIN) ||
+        (*ay == INT16_MAX) || (*ay == INT16_MIN) ||
+        (*az == INT16_MAX) || (*az == INT16_MIN) ) {
+        // 바로 이전 출력으로 롤백
+        *ax = accPrevOut[imu_id][0];
+        *ay = accPrevOut[imu_id][1];
+        *az = accPrevOut[imu_id][2];
+    }
+    if ((*gx == INT16_MAX) || (*gx == INT16_MIN) ||
+        (*gy == INT16_MAX) || (*gy == INT16_MIN) ||
+        (*gz == INT16_MAX) || (*gz == INT16_MIN) ) {
+        *gx = gyrPrevOut[imu_id][0];
+        *gy = gyrPrevOut[imu_id][1];
+        *gz = gyrPrevOut[imu_id][2];
+    }
+
+    // ── 1) very-short median(5) : 단발 스파이크 제거 ───────
+    int16_t mx = median5_push_get(&accRing[imu_id][0], *ax);
+    int16_t my = median5_push_get(&accRing[imu_id][1], *ay);
+    int16_t mz = median5_push_get(&accRing[imu_id][2], *az);
+    int16_t rx = median5_push_get(&gyrRing[imu_id][0], *gx);
+    int16_t ry = median5_push_get(&gyrRing[imu_id][1], *gy);
+    int16_t rz = median5_push_get(&gyrRing[imu_id][2], *gz);
+
+    // ── 2) Slew-limit : 한 번에 큰 점프 제한(기존) ────────
+    if(!accOutInit[imu_id][0]){ accPrevOut[imu_id][0]=mx; accOutInit[imu_id][0]=1; }
+    if(!accOutInit[imu_id][1]){ accPrevOut[imu_id][1]=my; accOutInit[imu_id][1]=1; }
+    if(!accOutInit[imu_id][2]){ accPrevOut[imu_id][2]=mz; accOutInit[imu_id][2]=1; }
+    if(!gyrOutInit[imu_id][0]){ gyrPrevOut[imu_id][0]=rx; gyrOutInit[imu_id][0]=1; }
+    if(!gyrOutInit[imu_id][1]){ gyrPrevOut[imu_id][1]=ry; gyrOutInit[imu_id][1]=1; }
+    if(!gyrOutInit[imu_id][2]){ gyrPrevOut[imu_id][2]=rz; gyrOutInit[imu_id][2]=1; }
+
+    int16_t sx = slew_limit(accPrevOut[imu_id][0], mx, DMAX_A[imu_id][0]);
+    int16_t sy = slew_limit(accPrevOut[imu_id][1], my, DMAX_A[imu_id][1]);
+    int16_t sz = slew_limit(accPrevOut[imu_id][2], mz, DMAX_A[imu_id][2]);
+    int16_t tx = slew_limit(gyrPrevOut[imu_id][0], rx, DMAX_G[imu_id][0]);
+    int16_t ty = slew_limit(gyrPrevOut[imu_id][1], ry, DMAX_G[imu_id][1]);
+    int16_t tz = slew_limit(gyrPrevOut[imu_id][2], rz, DMAX_G[imu_id][2]);
+
+    // ── 3) 3축 동시 점프(접촉/EMI) 차단 ─────────────────────
+    if (three_axis_jump(accPrevOut[imu_id][0], accPrevOut[imu_id][1], accPrevOut[imu_id][2], sx, sy, sz)) {
+        sx = accPrevOut[imu_id][0]; sy = accPrevOut[imu_id][1]; sz = accPrevOut[imu_id][2];
+    }
+    if (three_axis_jump(gyrPrevOut[imu_id][0], gyrPrevOut[imu_id][1], gyrPrevOut[imu_id][2], tx, ty, tz)) {
+        tx = gyrPrevOut[imu_id][0]; ty = gyrPrevOut[imu_id][1]; tz = gyrPrevOut[imu_id][2];
+    }
+
+    // ── 4) 동적 스파이크 클램프 (평균 변화량 기반) ──────────
+    // ref는 EMA 이전의 "직전 출력"을 사용하면 안정적
+    int16_t refAx = accPrevOut[imu_id][0], refAy = accPrevOut[imu_id][1], refAz = accPrevOut[imu_id][2];
+    int16_t refGx = gyrPrevOut[imu_id][0], refGy = gyrPrevOut[imu_id][1], refGz = gyrPrevOut[imu_id][2];
+
+    // 평균 변화량 업데이트
+    dEmaA[imu_id][0] = ema_step_i32(dEmaA[imu_id][0], iabs32((int32_t)sx - refAx));
+    dEmaA[imu_id][1] = ema_step_i32(dEmaA[imu_id][1], iabs32((int32_t)sy - refAy));
+    dEmaA[imu_id][2] = ema_step_i32(dEmaA[imu_id][2], iabs32((int32_t)sz - refAz));
+    dEmaG[imu_id][0] = ema_step_i32(dEmaG[imu_id][0], iabs32((int32_t)tx - refGx));
+    dEmaG[imu_id][1] = ema_step_i32(dEmaG[imu_id][1], iabs32((int32_t)ty - refGy));
+    dEmaG[imu_id][2] = ema_step_i32(dEmaG[imu_id][2], iabs32((int32_t)tz - refGz));
+
+
+    sx = clamp_dynamic(refAx, sx, dEmaA[imu_id][0]);
+    sy = clamp_dynamic(refAy, sy, dEmaA[imu_id][1]);
+    sz = clamp_dynamic(refAz, sz, dEmaA[imu_id][2]);
+    tx = clamp_dynamic(refGx, tx, dEmaG[imu_id][0]);
+    ty = clamp_dynamic(refGy, ty, dEmaG[imu_id][1]);
+    tz = clamp_dynamic(refGz, tz, dEmaG[imu_id][2]);
+
+    // ── 5) 1차 LPF(EMA) : 잔진동/스파크 스무딩 ─────────────
+    if(!emaInitA[imu_id][0]){ emaA[imu_id][0]=sx; emaInitA[imu_id][0]=1; }
+    if(!emaInitA[imu_id][1]){ emaA[imu_id][1]=sy; emaInitA[imu_id][1]=1; }
+    if(!emaInitA[imu_id][2]){ emaA[imu_id][2]=sz; emaInitA[imu_id][2]=1; }
+    if(!emaInitG[imu_id][0]){ emaG[imu_id][0]=tx; emaInitG[imu_id][0]=1; }
+    if(!emaInitG[imu_id][1]){ emaG[imu_id][1]=ty; emaInitG[imu_id][1]=1; }
+    if(!emaInitG[imu_id][2]){ emaG[imu_id][2]=tz; emaInitG[imu_id][2]=1; }
+
+    int16_t fx = ema_step(emaA[imu_id][0], sx);
+    int16_t fy = ema_step(emaA[imu_id][1], sy);
+    int16_t fz = ema_step(emaA[imu_id][2], sz);
+    int16_t gx2= ema_step(emaG[imu_id][0], tx);
+    int16_t gy2= ema_step(emaG[imu_id][1], ty);
+    int16_t gz2= ema_step(emaG[imu_id][2], tz);
+
+    // ── 6) 포스트 median3 : 마지막 미세 스파이크 컷 ────────
+    fx  = post_med3_push(imu_id, 0, fx, 0);
+    fy  = post_med3_push(imu_id, 1, fy, 0);
+    fz  = post_med3_push(imu_id, 2, fz, 0);
+    gx2 = post_med3_push(imu_id, 0, gx2, 1);
+    gy2 = post_med3_push(imu_id, 1, gy2, 1);
+    gz2 = post_med3_push(imu_id, 2, gz2, 1);
+
+    // 상태/출력 갱신
+    accPrevOut[imu_id][0]=fx; *ax = fx;
+    accPrevOut[imu_id][1]=fy; *ay = fy;
+    accPrevOut[imu_id][2]=fz; *az = fz;
+    gyrPrevOut[imu_id][0]=gx2; *gx = gx2;
+    gyrPrevOut[imu_id][1]=gy2; *gy = gy2;
+    gyrPrevOut[imu_id][2]=gz2; *gz = gz2;
+
+    emaA[imu_id][0]=fx; emaA[imu_id][1]=fy; emaA[imu_id][2]=fz;
+    emaG[imu_id][0]=gx2; emaG[imu_id][1]=gy2; emaG[imu_id][2]=gz2;
+}
+
+/*----------------------------------------------------------------------------------*/
+
+static uint32_t fnv1a32(const void* p, size_t n)
+{
+  const uint8_t* b=(const uint8_t*)p; uint32_t h=2166136261u;
+  for(size_t i=0;i<n;i++){ h^=b[i]; h*=16777619u; } return h;
+}
+static void print_fp(const float *x, int n)
+{
+  double s1=0.0, s2=0.0; for(int i=0;i<n;i++){ s1+=x[i]; s2+=(double)x[i]*x[i]; }
+  uint32_t crc=fnv1a32(x, n*sizeof(float));
+  printf("[FP] n=%d sum=%.6f sumsq=%.6f crc=0x%08lX | head: %.6f, %.6f, tail: %.6f\r\n",
+         n, s1, s2, (unsigned long)crc, x[0], x[1], x[n-1]);
+}
+
+static void reduce_or_pad_to_L_raw(const float (*src)[FRAME_CHANNELS],
+                                   int len, float *dst)
+{
+    const int C = FRAME_CHANNELS;
+    if (len <= 0) {
+        // 전부 0
+        for (int i = 0; i < L_TARGET*C; ++i) dst[i] = 0.0f;
+        return;
+    }
+    if (len == L_TARGET) {
+        // 그대로 복사
+        for (int i = 0; i < L_TARGET; ++i) {
+            const float *in  = &src[i][0];
+            float *out = &dst[i*C];
+            for (int c = 0; c < C; ++c) out[c] = in[c];
+        }
+        return;
+    }
+    if (len > L_TARGET) {
+        // 구간 경계 계산 (np.linspace(0, len, L_TARGET+1).astype(int))
+        // 정수 보정: 누적 오차 없이 0..len 범위를 L_TARGET 구간으로 균등분할
+        int edges[L_TARGET + 1];
+        for (int i = 0; i <= L_TARGET; ++i) {
+            // float→int 캐스팅은 floor와 동일 (양수 구간)
+            float pos = (float)i * ((float)len / (float)L_TARGET);
+            int e = (int)(pos); // 0 <= e <= len
+            if (e < 0)   e = 0;
+            if (e > len) e = len;
+            edges[i] = e;
+        }
+        // 각 구간 평균
+        for (int i = 0; i < L_TARGET; ++i) {
+            int s = edges[i], e = edges[i+1];
+            float *out = &dst[i*C];
+            if (e <= s) {
+                // 빈 구간 방어: 가장 가까운 샘플 복사
+                if (s >= len) s = len - 1;
+                const float *in = &src[s][0];
+                for (int c = 0; c < C; ++c) out[c] = in[c];
+            } else {
+                // 평균
+                int cnt = e - s;
+                for (int c = 0; c < C; ++c) {
+                    double acc = 0.0;
+                    for (int t = s; t < e; ++t) acc += src[t][c];
+                    out[c] = (float)(acc / (double)cnt);
+                }
+            }
+        }
+        return;
+    }
+    // len < L_TARGET: 복사 + 0 패딩
+    int i = 0;
+    for (; i < len; ++i) {
+        const float *in = &src[i][0];
+        float *out = &dst[i*C];
+        for (int c = 0; c < C; ++c) out[c] = in[c];
+    }
+    for (; i < L_TARGET; ++i) {
+        float *out = &dst[i*C];
+        for (int c = 0; c < C; ++c) out[c] = 0.0f;
+    }
+}
+// 32-byte 정렬 보장 & 길이 올림++
+// RAW 1행(30채널) → g/dps
+
+
+// (선택) 입력 통계 (z-score 아님)
+
+static inline void dcache_clean(void *addr, size_t size) {
+    uintptr_t a = (uintptr_t)addr & ~((uintptr_t)31);
+    size_t    s = ((size + 31U) / 32U) * 32U + ((uintptr_t)addr - a);
+    SCB_CleanDCache_by_Addr((uint32_t*)a, (int32_t)s);
+}
+static inline void dcache_invalidate(void *addr, size_t size) {
+    uintptr_t a = (uintptr_t)addr & ~((uintptr_t)31);
+    size_t    s = ((size + 31U) / 32U) * 32U + ((uintptr_t)addr - a);
+    SCB_InvalidateDCache_by_Addr((uint32_t*)a, (int32_t)s);
+}
+
+
+// (len x 30) → (128 x 30) 선형보간
+
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart == &huart1) {
@@ -218,6 +504,58 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     }
     */
 }
+
+void AI_Create(void)
+{
+    if (ai_created) return;
+    ai_error err = ai_imu_model_create(&imu_model, AI_IMU_MODEL_DATA_CONFIG);
+    if (err.type != AI_ERROR_NONE) {
+        printf("❌ ai_imu_model_create failed (type=%d code=%d)\r\n", err.type, err.code);
+        Error_Handler();
+    }
+    ai_created = true;
+    printf("✅ Model created successfully\r\n");
+}
+
+void AI_Init(void)
+{
+    if (ai_inited) return;
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-braces"
+    const ai_network_params params = {
+        AI_IMU_MODEL_DATA_WEIGHTS(ai_imu_model_data_weights_get()),
+        AI_IMU_MODEL_DATA_ACTIVATIONS(activations)
+    };
+#pragma GCC diagnostic pop
+
+    ai_bool ok = ai_imu_model_init(imu_model, &params);
+    if (!ok) {
+        ai_error err = ai_imu_model_get_error(imu_model);
+        printf("❌ ai_imu_model_init failed (type=%d code=%d)\r\n", err.type, err.code);
+        Error_Handler();
+    }
+    ai_inited = true;
+    printf("✅ Model initialized successfully\r\n");
+}
+
+/* 3) run: ai_i32 반환 */
+void AI_Run(float *input_data, float *output_data)
+{
+    ai_buffer *ai_input  = ai_imu_model_inputs_get(imu_model, NULL);
+    ai_buffer *ai_output = ai_imu_model_outputs_get(imu_model, NULL);
+
+    ai_input[0].data  = (void*)input_data;
+    ai_output[0].data = (void*)output_data;
+
+    ai_i32 batch = ai_imu_model_run(imu_model, ai_input, ai_output);
+    if (batch != 1) {
+        ai_error err = ai_imu_model_get_error(imu_model);
+        printf("❌ AI run error: type=%d, code=%d\r\n", err.type, err.code);
+        Error_Handler();
+    }
+}
+
 
 static inline HAL_StatusTypeDef uart1_dma_printf(const uint8_t *data, uint16_t len, TickType_t wait)
 {
@@ -263,58 +601,216 @@ void store_current_imu_frame(float buffer[][30], uint16_t index)
 
 void imu_config_setting(void)
 {
-    // ---------------- 공통 세팅 ----------------
-    uint8_t resetData[2]     = {0x6B, 0x80}; // PWR_MGMT_1 : Device Reset
-    uint8_t wakeData[2]      = {0x6B, 0x01}; // PWR_MGMT_1 : 클록 = PLL, 슬립 해제
-    uint8_t disableI2C[2]    = {0x6A, 0x10}; // USER_CTRL  : I2C 비활성화 (I2C_IF_DIS=1)
+    // ── 공통 레지스터 값 ─────────────────────────────────────────────────────
+    uint8_t smplrtDiv[2]   = {0x19, 19};   // 1000/(1+19)=50 Hz
+    uint8_t gyroCfg[2]     = {0x1B, 0x18}; // ±2000 dps
+    uint8_t accelCfg[2]    = {0x1C, 0x10}; // ±8 g
+    uint8_t accelDlpf[2]   = {0x1D, 0x03}; // ACCEL DLPF=3(≈45 Hz)
 
-    uint8_t gyroDLPF[2]      = {0x1A, 0x04}; // CONFIG  26   : DLPF_CFG=3 → Gyro 41Hz, FSYNC Disabled
-    uint8_t accelDLPF[2]     = {0x1D, 0x04}; // ACCEL_CONFIG2 : A_DLPF_CFG=3 → Accel 44Hz
+    uint8_t resetData[2]   = {0x6B, 0x80}; // PWR_MGMT_1: reset
+    uint8_t wakeData[2]    = {0x6B, 0x01}; // PWR_MGMT_1: CLK=PLL, sleep off
+    uint8_t disableI2C[2]  = {0x6A, 0x10}; // USER_CTRL : I2C_IF_DIS=1
+    uint8_t configData[2]  = {0x1A, 0x03}; // CONFIG    : GYRO DLPF=3
+    uint8_t pwr2Data[2]    = {0x6C, 0x00}; // PWR_MGMT_2: 모든 축 활성화
 
-    uint8_t pwr2Data[2]      = {0x6C, 0x00}; // PWR_MGMT_2 : 모든 축 활성화 (기본)
+    // ---------------- IMU1 (SPI1, PD0) ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, resetData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
 
-    // IMU별 CS 핀 배열
-    GPIO_TypeDef* ports[5] = {GPIOD, GPIOD, GPIOD, GPIOD, GPIOD};
-    uint16_t pins[5] = {GPIO_PIN_0, GPIO_PIN_1, GPIO_PIN_2, GPIO_PIN_3, GPIO_PIN_4};
-    SPI_HandleTypeDef* spis[5] = {&hspi1, &hspi1, &hspi2, &hspi2, &hspi3};
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, disableI2C, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
 
-    for (int i = 0; i < 5; i++)
-    {
-        // RESET
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_RESET);
-        HAL_SPI_Transmit(spis[i], resetData, 2, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_SET);
-        vTaskDelay(pdMS_TO_TICKS(20));
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, wakeData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
 
-        // I2C Disable
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_RESET);
-        HAL_SPI_Transmit(spis[i], disableI2C, 2, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_SET);
-        vTaskDelay(pdMS_TO_TICKS(10));
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, pwr2Data, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
 
-        // Wake-up (use PLL)
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_RESET);
-        HAL_SPI_Transmit(spis[i], wakeData, 2, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_SET);
-        vTaskDelay(pdMS_TO_TICKS(10));
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);  // GYRO DLPF
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
 
-        // Power Management 2 (모든 축 ON)
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_RESET);
-        HAL_SPI_Transmit(spis[i], pwr2Data, 2, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, gyroCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
 
-        // Gyro DLPF = 41 Hz
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_RESET);
-        HAL_SPI_Transmit(spis[i], gyroDLPF, 2, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, accelCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
 
-        // Accel DLPF = 44 Hz
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_RESET);
-        HAL_SPI_Transmit(spis[i], accelDLPF, 2, HAL_MAX_DELAY);
-        HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, accelDlpf, 2, HAL_MAX_DELAY);   // ACCEL DLPF
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
 
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, smplrtDiv, 2, HAL_MAX_DELAY);   // 최종 샘플링=50Hz
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // ---------------- IMU2 (SPI1, PD1) ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, resetData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, disableI2C, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, wakeData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, pwr2Data, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, gyroCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, accelCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, accelDlpf, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, smplrtDiv, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // ---------------- IMU3 (SPI2, PD2) ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, resetData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, disableI2C, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, wakeData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, pwr2Data, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, configData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, gyroCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, accelCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, accelDlpf, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, smplrtDiv, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // ---------------- IMU4 (SPI2, PD3) ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, resetData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, disableI2C, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, wakeData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, pwr2Data, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, configData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, gyroCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, accelCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, accelDlpf, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi2, smplrtDiv, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // ---------------- IMU5 (SPI3, PD4) ----------------
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, resetData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, disableI2C, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, wakeData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, pwr2Data, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, configData, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, gyroCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, accelCfg, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, accelDlpf, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi3, smplrtDiv, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
 }
 
 void Read_imu1(void *pvParameters)
@@ -343,6 +839,11 @@ void Read_imu1(void *pvParameters)
             imuFrame.imu_gz[0] = (int16_t)((buf[12]<<8)|buf[13]);
 
             imuFrame.tick[0] = tick_now; // tick 저장
+            // ... 기존 파싱 코드 바로 아래에 추가
+            // IMU1 읽은 직후
+            spike_filter_apply_v(0,
+                &imuFrame.imu_ax[0], &imuFrame.imu_ay[0], &imuFrame.imu_az[0],
+                &imuFrame.imu_gx[0], &imuFrame.imu_gy[0], &imuFrame.imu_gz[0]);
 
 
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
@@ -358,13 +859,13 @@ void Read_imu1(void *pvParameters)
 	        imuFrame.imu_gz[1] = (int16_t)((buf[12]<<8)|buf[13]);
 
 	        imuFrame.tick[1] = tick_now; // tick 저장 (같은 시점)
+	        // IMU2 읽은 직후
+	        spike_filter_apply_v(1,
+	            &imuFrame.imu_ax[1], &imuFrame.imu_ay[1], &imuFrame.imu_az[1],
+	            &imuFrame.imu_gx[1], &imuFrame.imu_gy[1], &imuFrame.imu_gz[1]);
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
-	        vTaskDelay(pdMS_TO_TICKS(20));
-
     	}
-
-
         vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
 }
@@ -382,10 +883,10 @@ void Read_imu2(void *pvParameters)
     	{
             tick_now = xTaskGetTickCount();
 
-    		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_RESET);
+    		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     		HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
     		HAL_SPI_Receive(&hspi2, buf, 14, HAL_MAX_DELAY);
-    		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_SET);
+    		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
 
             imuFrame.imu_ax[2] = (int16_t)((buf[0]<<8)|buf[1]);
             imuFrame.imu_ay[2] = (int16_t)((buf[2]<<8)|buf[3]);
@@ -395,6 +896,9 @@ void Read_imu2(void *pvParameters)
             imuFrame.imu_gz[2] = (int16_t)((buf[12]<<8)|buf[13]);
 
             imuFrame.tick[2] = tick_now; // tick 저장
+            spike_filter_apply_v(2,
+                &imuFrame.imu_ax[2], &imuFrame.imu_ay[2], &imuFrame.imu_az[2],
+                &imuFrame.imu_gx[2], &imuFrame.imu_gy[2], &imuFrame.imu_gz[2]);
 
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
@@ -410,12 +914,12 @@ void Read_imu2(void *pvParameters)
 
             imuFrame.tick[3] = tick_now; // tick 저장 (같은 시점)
 
+            spike_filter_apply_v(3,
+                &imuFrame.imu_ax[3], &imuFrame.imu_ay[3], &imuFrame.imu_az[3],
+                &imuFrame.imu_gx[3], &imuFrame.imu_gy[3], &imuFrame.imu_gz[3]);
+
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
-
-	        vTaskDelay(pdMS_TO_TICKS(20));
-
     	}
-
         vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
 }
@@ -448,14 +952,27 @@ void Read_imu3(void *pvParameters)
             imuFrame.imu_gz[4] = (int16_t)((buf[12]<<8)|buf[13]);
 
             imuFrame.tick[4] = tick_now; // tick 저장
+            spike_filter_apply_v(4,
+                &imuFrame.imu_ax[4], &imuFrame.imu_ay[4], &imuFrame.imu_az[4],
+                &imuFrame.imu_gx[4], &imuFrame.imu_gy[4], &imuFrame.imu_gz[4]);
 
+/*
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_RESET);
+			HAL_SPI_Transmit(&hspi3, &reg, 1, HAL_MAX_DELAY);
+			HAL_SPI_Receive(&hspi3, buf, 14, HAL_MAX_DELAY);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_SET);
+
+	        imuFrame.imu_ax[5] = (int16_t)((buf[0]<<8)|buf[1]);
+	        imuFrame.imu_ay[5] = (int16_t)((buf[2]<<8)|buf[3]);
+	        imuFrame.imu_az[5] = (int16_t)((buf[4]<<8)|buf[5]);
+	        imuFrame.imu_gx[5] = (int16_t)((buf[8]<<8)|buf[9]);
+	        imuFrame.imu_gy[5] = (int16_t)((buf[10]<<8)|buf[11]);
+	        imuFrame.imu_gz[5] = (int16_t)((buf[12]<<8)|buf[13]);
+
+            imuFrame.tick[5] = tick_now; // tick 저장 (같은 시점)
+*/
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
-
-	        vTaskDelay(pdMS_TO_TICKS(20));
-
     	}
-
-
         vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
 }
@@ -502,84 +1019,80 @@ void imu_store(void *pvParameters)
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
-
 void IMU_MODEL(void *pvParameters)
 {
     for (;;)
     {
-        // ✅ recording_done 신호가 오면 추론 시작
+    	//AI_Sanity_ZeroInputOnce();
         if (recording_done)
         {
-            printf("🤖 [AI_MODEL] Processing inference...\r\n");
+            printf("🤖 [AI_MODEL] Processing inference (RAW→L=%d AvgPool)...\r\n", L_TARGET);
 
-            // 🔒 버퍼 접근 보호 (다른 Task가 덮어쓰지 않도록)
+            // 1) RAW 스냅샷
             xSemaphoreTake(imuSyncSem, portMAX_DELAY);
-
-            // 🔹 입력/출력 버퍼
-            float input_data[128 * FRAME_CHANNELS] = {0.0f};
-            float output_data[AI_IMU_MODEL_OUT_1_SIZE] = {0.0f};
-
-            // 🔹 현재 수집된 프레임 수 (지역 변수로 복사)
             uint16_t len = frame_count;
+            if (len > MAX_FRAMES) len = MAX_FRAMES;
 
-            // 🔹 길이 보정
-            if (len > 128)
-            {
-                // ① 축소 (선형 리샘플링)
-                for (int i = 0; i < 128; i++) {
-                    int src = (int)((float)i / 128.0f * len);
-                    for (int c = 0; c < FRAME_CHANNELS; c++)
-                        input_data[i*FRAME_CHANNELS + c] = imu_buffer[src][c] / 32768.0f;
-                }
-            }
-            else
-            {
-                // ② 패딩 (모자란 부분 0으로)
-                for (int i = 0; i < len; i++) {
-                    for (int c = 0; c < FRAME_CHANNELS; c++)
-                        input_data[i*FRAME_CHANNELS + c] = imu_buffer[i][c] / 32768.0f;
-                }
-                for (int i = len; i < 128; i++) {
-                    for (int c = 0; c < FRAME_CHANNELS; c++)
-                        input_data[i*FRAME_CHANNELS + c] = 0.0f;
-                }
-            }
-
-            // 🔓 버퍼 잠금 해제
+            static float tmp_raw[MAX_FRAMES][FRAME_CHANNELS];
+            for (uint16_t i = 0; i < len; ++i)
+                for (int c = 0; c < FRAME_CHANNELS; ++c)
+                    tmp_raw[i][c] = (float)imu_buffer[i][c]; // ★ LSB 원값 그대로
             xSemaphoreGive(imuSyncSem);
 
-            // 🔹 추론 실행
-            AI_Run(input_data, output_data);
+            // 2) 파이썬과 동일: T>100 → 구간 평균 축소, T<100 → 0패딩, T=100 → 그대로
+            reduce_or_pad_to_L_raw(tmp_raw, len, ai_input_buffer);
 
-            // 🔹 출력 로그
-            printf("AI Output:\r\n");
-            for (int i = 0; i < AI_IMU_MODEL_OUT_1_SIZE; i++) {
-                printf("  [%d] = %.6f\r\n", i, output_data[i]);
-            }
+            // 3) 디버깅: 합/제곱합/CRC 찍기(파이썬과 텐서 동일성 확인용)
+            print_fp(ai_input_buffer, L_TARGET*FRAME_CHANNELS);
 
-            // 🔹 결과 해석 (가장 높은 확률 클래스 찾기)
-            int best_idx = 0;
-            float best_val = output_data[0];
-            for (int i = 1; i < AI_IMU_MODEL_OUT_1_SIZE; i++) {
-                if (output_data[i] > best_val) {
-                    best_val = output_data[i];
-                    best_idx = i;
-                }
-            }
+            // 4) 캐시 정리 → 추론 → 캐시 무효화
+            dcache_clean(ai_input_buffer, sizeof(ai_input_buffer));
+            AI_Run(ai_input_buffer, ai_output_buffer);
+            dcache_invalidate(ai_output_buffer, sizeof(ai_output_buffer));
 
-            printf("➡️ Predicted class = %d (%.2f%%)\r\n",
-                   best_idx, best_val * 100.0f);
+            // 5) 결과 출력 (2클래스: p0, p1)
+            printf("[Y] p0=%.6f  p1=%.6f\r\n", ai_output_buffer[0], ai_output_buffer[1]);
+            int best_idx = (ai_output_buffer[1] > ai_output_buffer[0]) ? 1 : 0;
+            float best_val = ai_output_buffer[best_idx];
+            printf("➡️ Predicted class = %d (%.2f%%)\r\n", best_idx, best_val * 100.0f);
 
-            // 🔹 상태 초기화
-            frame_count = 0;
+            // 6) 상태 초기화
+            frame_count    = 0;
             recording_done = false;
-            sensingEnabled = false;  // 다음 버튼 눌러야 새 동작 시작
+            sensingEnabled = false;
 
             printf("[AI_MODEL] Done. Waiting for next motion.\r\n\n");
         }
-
-        vTaskDelay(pdMS_TO_TICKS(50));  // 주기적 체크
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void vApplicationMallocFailedHook(void)
+{
+    printf("!! MALLOC FAILED (heap exhausted) !!\r\n");
+    taskDISABLE_INTERRUPTS();
+    for(;;);
+}
+
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    printf("!! STACK OVERFLOW in %s !!\r\n", pcTaskName ? pcTaskName : "?");
+    taskDISABLE_INTERRUPTS();
+    for(;;);
 }
 /* USER CODE END 0 */
 
@@ -676,12 +1189,29 @@ Error_Handler();
 
   imuSyncSem = xSemaphoreCreateMutex();
   configASSERT(imuSyncSem != NULL);
-  xTaskCreate(Read_imu1,"Read_imu1",512,NULL,2,NULL);
-  xTaskCreate(Read_imu2,"Read_imu2",512,NULL,2,NULL);
-  xTaskCreate(Read_imu3,"Read_imu3",512,NULL,2,NULL);
-  xTaskCreate(imu_store,"imu_store",512,NULL,2,NULL);
-  xTaskCreate(IMU_MODEL,"IMU_MODEL",1024,NULL,2,NULL);
+
+  // 실패 시 바로 알게 하기 (간단버전)
+  #define CREATE_TASK(fn, name, stack, prio)                                  \
+    do {                                                                       \
+      BaseType_t rc = xTaskCreate(fn, name, (stack), NULL, (prio), NULL);      \
+      if (rc != pdPASS) {                                                      \
+        printf("[TASK] create FAIL: %s\r\n", name);                            \
+        Error_Handler();                                                       \
+      } else {                                                                 \
+        printf("[TASK] create OK  : %s\r\n", name);                            \
+      }                                                                        \
+    } while (0)
+
+  // ---- 여기부터 네 코드 교체 ----
+  CREATE_TASK(Read_imu1,  "Read_imu1",  512, 2);
+  CREATE_TASK(Read_imu2,  "Read_imu2",  512, 2);
+  CREATE_TASK(Read_imu3,  "Read_imu3",  512, 2);
+  CREATE_TASK(imu_store,  "imu_store",  512, 2);
+
+  /* IMU_MODEL은 printf 많음 → 1536 words(=6KB)면 보통 충분 */
+  CREATE_TASK(IMU_MODEL,  "IMU_MODEL",  1536, 2);
   imu_config_setting();
+
   AI_Create();
   AI_Init();
 
