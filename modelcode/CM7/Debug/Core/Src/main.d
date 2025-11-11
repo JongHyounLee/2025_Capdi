@@ -54,7 +54,7 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../../Middlewares/Third_Party/FreeRTOS/Source/include/event_groups.h \
  ../../Middlewares/Third_Party/FreeRTOS/Source/include/timers.h \
  ../Core/Inc/dma.h ../Core/Inc/main.h ../Core/Inc/spi.h ../Core/Inc/tim.h \
- ../Core/Inc/usart.h ../Core/Inc/gpio.h \
+ ../Core/Inc/usart.h ../Core/Inc/gpio.h ../Core/Inc/cubeai_preprocess.h \
  ../../Middlewares/ST/AI/Inc/ai_platform.h ../X-CUBE-AI/App/imu_model.h \
  ../X-CUBE-AI/App/imu_model_config.h ../X-CUBE-AI/App/imu_model_data.h \
  ../X-CUBE-AI/App/imu_model_data_params.h
@@ -119,6 +119,7 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Inc/tim.h:
 ../Core/Inc/usart.h:
 ../Core/Inc/gpio.h:
+../Core/Inc/cubeai_preprocess.h:
 ../../Middlewares/ST/AI/Inc/ai_platform.h:
 ../X-CUBE-AI/App/imu_model.h:
 ../X-CUBE-AI/App/imu_model_config.h:

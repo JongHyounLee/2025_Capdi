@@ -24,6 +24,9 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
 #include <string.h>
 #include "FreeRTOS.h"
 #include "semphr.h"   // ✅ 세마포어 관련 함수 선언 (필수)
@@ -31,12 +34,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
 volatile int uartTxDone = 1;
 volatile bool sensingEnabled = false;  // 전역 변수
 volatile uint8_t action=0;
-volatile uint8_t label=3;
+volatile uint8_t label=0;
 SemaphoreHandle_t uartMtx;          // UART 보호용 뮤텍스
 SemaphoreHandle_t uartTxDoneSem;    // DMA 완료 신호용 바이너리 세마포어
 #define UART_BUF_SIZE 1024   // 5개 IMU 데이터 한 줄 충분
@@ -68,11 +69,13 @@ SemaphoreHandle_t dataReadySem;
 #define imu_cs2_num GPIO_PIN_1
 
 #define imu_cs3_port GPIOD
-#define imu_cs3_num GPIO_PIN_12
+#define imu_cs3_num GPIO_PIN_2
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+
+
 // ---- EMA 상태 & 변화율 평균(|Δ|) 추적 ----
 #define IMU_MAX 6
 static int16_t emaA[IMU_MAX][3] = {0}, emaG[IMU_MAX][3] = {0};
@@ -667,10 +670,7 @@ void Read_imu1(void *pvParameters)
 	            &imuFrame.imu_gx[1], &imuFrame.imu_gy[1], &imuFrame.imu_gz[1]);
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
-
     	}
-
-
         vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
 }
@@ -786,10 +786,7 @@ void Read_imu2(void *pvParameters)
                 &imuFrame.imu_gx[3], &imuFrame.imu_gy[3], &imuFrame.imu_gz[3]);
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
-
-
     	}
-
         vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
 }
@@ -843,11 +840,7 @@ void Read_imu3(void *pvParameters)
             imuFrame.tick[5] = tick_now; // tick 저장 (같은 시점)
 */
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
-
-
     	}
-
-
         vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
 }

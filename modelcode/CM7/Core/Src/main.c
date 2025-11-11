@@ -27,6 +27,17 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+// ★ 전처리 C파일을 프로젝트에 추가한 상태에서
+#include "cubeai_preprocess.h"   // TCN_L(=128), TCN_C(=30), 리샘플/정규화 함수
+
+#ifndef MAX_FRAMES
+#define MAX_FRAMES 512   // 50Hz 기준 최대 약 10.2초 버퍼
+#endif
+
+// 기존 상수들도 헤더와 같게 맞춤
+#define L_TARGET     TCN_L      // 128
+#define FRAME_CHANNELS TCN_C    // 30
+
 #include <string.h>
 #include "ai_platform.h"
 #include "imu_model.h"
@@ -51,31 +62,34 @@ SemaphoreHandle_t imuSyncSem;   // IMU 버퍼 보호용 세마포어
 
 static volatile uint8_t activeBuf = 0;
 static volatile uint8_t uartDmaBusy = 0;
-#define MAX_FRAMES     256
-#ifndef L_TARGET
-#define L_TARGET        100      // 🔁 128 → 100
-#endif
-#ifndef FRAME_CHANNELS
-#define FRAME_CHANNELS  30
-#endif
-
-/* ==== AI buffers in D2 (non-TCM), cache-line aligned ==== */
-__attribute__((section(".RAM_D2"), aligned(32)))
-static ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];   // 전역만 사용
-
 
 __attribute__((section(".RAM_D2"), aligned(32)))
-static float ai_input_buffer[L_TARGET * FRAME_CHANNELS]; // 🔁 128*30 → L_TARGET*FRAME_CHANNELS
+static ai_u8 activations[AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE];
+
 __attribute__((section(".RAM_D2"), aligned(32)))
+static float ai_input_buffer[TCN_L][TCN_C];   // 128×30
+
+// 바꾼 뒤
+__attribute__((section(".RAM_D1"), aligned(32)))
 static float ai_output_buffer[AI_IMU_MODEL_OUT_1_SIZE];
-#if (AI_IMU_MODEL_IN_1_SIZE != (L_TARGET * FRAME_CHANNELS))
-#error "Network input size mismatch: AI_IMU_MODEL_IN_1_SIZE != L_TARGET*FRAME_CHANNELS"
+
+
+#if (AI_IMU_MODEL_IN_1_SIZE != (TCN_L * TCN_C))
+#error "Network input size mismatch"
 #endif
+
+#if (AI_IMU_MODEL_OUT_1_SIZE != 3)
+#error "Network output size mismatch"
+#endif
+const int NCLS = AI_IMU_MODEL_OUT_1_SIZE;  // = 3
+
 static ai_bool ai_created = false;
 static ai_bool ai_inited  = false;
 
 
+__attribute__((section(".RAM_D2"), aligned(32)))
 float imu_buffer[MAX_FRAMES][FRAME_CHANNELS];
+
 volatile uint16_t frame_count = 0;
 volatile bool recording_done = false;
 
@@ -102,15 +116,100 @@ SemaphoreHandle_t dataReadySem;
 #define imu_cs2_num GPIO_PIN_1
 
 #define imu_cs3_port GPIOD
-#define imu_cs3_num GPIO_PIN_12
+#define imu_cs3_num GPIO_PIN_2
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+// ===== [DIAG 1] 정규화 전 채널별 min/max/var 요약 =====
+static void diag_prenorm_range(const float *x, int L, int C, float var_thr) {
+    // var_thr: 너무 낮은 분산(≈고정 채널) 경고 임계
+    for (int c = 0; c < C; ++c) {
+        double m=0, s=0, mn=1e30, mx=-1e30;
+        for (int t=0; t<L; ++t) {
+            float v = x[t*C + c];
+            m += v; s += (double)v * v;
+            if (v<mn) mn=v;
+            if (v>mx) mx=v;
+        }
+        m /= L; double v = s/L - m*m; if (v<0) v=0;
+        if (v < var_thr) {
+            printf("[WARN][pre] CH%02d almost-constant: mean=%.1f range=%.1f var=%.6f\r\n",
+                   c, (float)m, (float)(mx-mn), (float)v);
+        }
+    }
+}
+
+// ===== [DIAG 2] 채널별 평균 z-score(μ/σ 기준 편차) 상위 5개 =====
+static void diag_zbias_top5(const float *x, int L, int C) {
+    const float *mu = tcn_get_mu();
+    const float *sg = tcn_get_sigma();
+    struct { int c; float zmean; } top[5];
+    for (int i=0;i<5;i++){ top[i].c=-1; top[i].zmean=0.0f; }
+
+    for (int c=0; c<C; ++c) {
+        double zm=0;
+        float invs = (sg[c] > 1e-6f) ? (1.0f/sg[c]) : 1.0f;
+        for (int t=0; t<L; ++t) {
+            float v = x[t*C + c];
+            zm += (v - mu[c]) * invs;  // 정규화 후 값의 평균과 동일
+        }
+        float zmean = (float)(zm / L);
+        // 상위 5개 |zmean| 유지
+        for (int k=0;k<5;k++){
+            if (top[k].c < 0 || fabsf(zmean) > fabsf(top[k].zmean)) {
+                for (int j=4;j>k;j--) top[j]=top[j-1];
+                top[k].c = c; top[k].zmean = zmean;
+                break;
+            }
+        }
+    }
+    printf("[ZBIAS] top-5 |mean z| channels:\r\n");
+    for (int i=0;i<5;i++){
+        if (top[i].c >= 0)
+            printf("  CH%02d zmean=%.3f  (IMU%d_%s)\r\n",
+                top[i].c, top[i].zmean,
+                (top[i].c/6)+1,
+                (const char*[]){"ax","ay","az","gx","gy","gz"}[top[i].c%6]);
+    }
+}
+
+// ===== [DIAG 3] IMU별 활동성(6채널 합 범위/분산) =====
+static void diag_imu_activity(const float *x, int L, int C) {
+    for (int imu=0; imu<5; ++imu) {
+        int base = imu*6;
+        double sum_var=0, sum_range=0;
+        for (int k=0;k<6;k++){
+            double m=0, s=0, mn=1e30, mx=-1e30;
+            for (int t=0;t<L;t++){
+                float v = x[t*C + base + k];
+                m += v; s += (double)v*v;
+                if (v<mn) mn=v;
+                if (v>mx) mx=v;
+            }
+            m /= L; double v = s/L - m*m; if (v<0) v=0;
+            sum_var   += v;
+            sum_range += (mx - mn);
+        }
+        printf("[IMU%u] range_sum=%.1f  var_sum=%.3f\r\n",
+               imu+1, (float)sum_range, (float)sum_var);
+    }
+}
+
+// RAW 수집 버퍼: [T, 30]
+__attribute__((section(".RAM_D2"), aligned(32)))
+static float tmp_raw[MAX_FRAMES][FRAME_CHANNELS];
+
+static void debug_tensor_fp32(const float *x, int n)
+{
+    double s = 0.0, q = 0.0;
+    for (int i = 0; i < n; ++i) { s += x[i]; q += (double)x[i] * x[i]; }
+    printf("[FP] n=%d sum=%.6f sqsum=%.6f | head: %.6f, %.6f | tail: %.6f\r\n",
+           n, s, q, x[0], x[1], x[n-1]);
+}
 
 
-
-
+/*--------------------------------여기 아래는 스파이크 잡는용동 -------------------------------------------------*/
 // ---- EMA 상태 & 변화율 평균(|Δ|) 추적 ----
 #define IMU_MAX 6
 static int16_t emaA[IMU_MAX][3] = {0}, emaG[IMU_MAX][3] = {0};
@@ -391,86 +490,41 @@ static inline void spike_filter_apply_v(uint8_t imu_id,
 }
 
 /*----------------------------------------------------------------------------------*/
-
-static uint32_t fnv1a32(const void* p, size_t n)
+// ===== [ADD] 선형 리샘플: [len, C] → [L, C] =====
+static void linear_resample_LC(const float *src, int len, int C,
+                               float *dst, int L)
 {
-  const uint8_t* b=(const uint8_t*)p; uint32_t h=2166136261u;
-  for(size_t i=0;i<n;i++){ h^=b[i]; h*=16777619u; } return h;
-}
-static void print_fp(const float *x, int n)
-{
-  double s1=0.0, s2=0.0; for(int i=0;i<n;i++){ s1+=x[i]; s2+=(double)x[i]*x[i]; }
-  uint32_t crc=fnv1a32(x, n*sizeof(float));
-  printf("[FP] n=%d sum=%.6f sumsq=%.6f crc=0x%08lX | head: %.6f, %.6f, tail: %.6f\r\n",
-         n, s1, s2, (unsigned long)crc, x[0], x[1], x[n-1]);
-}
-
-static void reduce_or_pad_to_L_raw(const float (*src)[FRAME_CHANNELS],
-                                   int len, float *dst)
-{
-    const int C = FRAME_CHANNELS;
-    if (len <= 0) {
-        // 전부 0
-        for (int i = 0; i < L_TARGET*C; ++i) dst[i] = 0.0f;
+    if (len <= 1) {
+        // 한 샘플이면 전 구간 복제
+        for (int t = 0; t < L; ++t)
+            for (int c = 0; c < C; ++c)
+                dst[t*C + c] = src[0*C + c];
         return;
     }
-    if (len == L_TARGET) {
-        // 그대로 복사
-        for (int i = 0; i < L_TARGET; ++i) {
-            const float *in  = &src[i][0];
-            float *out = &dst[i*C];
-            for (int c = 0; c < C; ++c) out[c] = in[c];
+
+    for (int c = 0; c < C; ++c) {
+        for (int t = 0; t < L; ++t) {
+            float pos = (float)t * (float)(len - 1) / (float)(L - 1);
+            int i = (int)floorf(pos);
+            if (i >= len - 1) i = len - 2;
+            float a = pos - (float)i;
+
+            float s0 = src[i*C + c];
+            float s1 = src[(i+1)*C + c];
+            dst[t*C + c] = s0 + a * (s1 - s0);
         }
-        return;
-    }
-    if (len > L_TARGET) {
-        // 구간 경계 계산 (np.linspace(0, len, L_TARGET+1).astype(int))
-        // 정수 보정: 누적 오차 없이 0..len 범위를 L_TARGET 구간으로 균등분할
-        int edges[L_TARGET + 1];
-        for (int i = 0; i <= L_TARGET; ++i) {
-            // float→int 캐스팅은 floor와 동일 (양수 구간)
-            float pos = (float)i * ((float)len / (float)L_TARGET);
-            int e = (int)(pos); // 0 <= e <= len
-            if (e < 0)   e = 0;
-            if (e > len) e = len;
-            edges[i] = e;
-        }
-        // 각 구간 평균
-        for (int i = 0; i < L_TARGET; ++i) {
-            int s = edges[i], e = edges[i+1];
-            float *out = &dst[i*C];
-            if (e <= s) {
-                // 빈 구간 방어: 가장 가까운 샘플 복사
-                if (s >= len) s = len - 1;
-                const float *in = &src[s][0];
-                for (int c = 0; c < C; ++c) out[c] = in[c];
-            } else {
-                // 평균
-                int cnt = e - s;
-                for (int c = 0; c < C; ++c) {
-                    double acc = 0.0;
-                    for (int t = s; t < e; ++t) acc += src[t][c];
-                    out[c] = (float)(acc / (double)cnt);
-                }
-            }
-        }
-        return;
-    }
-    // len < L_TARGET: 복사 + 0 패딩
-    int i = 0;
-    for (; i < len; ++i) {
-        const float *in = &src[i][0];
-        float *out = &dst[i*C];
-        for (int c = 0; c < C; ++c) out[c] = in[c];
-    }
-    for (; i < L_TARGET; ++i) {
-        float *out = &dst[i*C];
-        for (int c = 0; c < C; ++c) out[c] = 0.0f;
     }
 }
-// 32-byte 정렬 보장 & 길이 올림++
-// RAW 1행(30채널) → g/dps
 
+// ===== [ADD] 정규화 후 채널 통계 출력 =====
+static void print_ch_stats(const float *x, int L, int C){
+    for (int c=0;c<C;c++){
+        double m=0, v=0;
+        for (int t=0;t<L;t++){ double z = x[t*C + c]; m+=z; v+=z*z; }
+        m/=L; v = v/L - m*m; if (v<0) v=0; double s = sqrt(v);
+        printf("CH%02d mean=%.3f std=%.3f\r\n", c, (float)m, (float)s);
+    }
+}
 
 // (선택) 입력 통계 (z-score 아님)
 
@@ -845,7 +899,7 @@ void Read_imu1(void *pvParameters)
                 &imuFrame.imu_ax[0], &imuFrame.imu_ay[0], &imuFrame.imu_az[0],
                 &imuFrame.imu_gx[0], &imuFrame.imu_gy[0], &imuFrame.imu_gz[0]);
 
-
+            xSemaphoreGive(dataReadySem);
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
 			HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
@@ -899,6 +953,7 @@ void Read_imu2(void *pvParameters)
             spike_filter_apply_v(2,
                 &imuFrame.imu_ax[2], &imuFrame.imu_ay[2], &imuFrame.imu_az[2],
                 &imuFrame.imu_gx[2], &imuFrame.imu_gy[2], &imuFrame.imu_gz[2]);
+            xSemaphoreGive(dataReadySem);
 
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
@@ -956,21 +1011,6 @@ void Read_imu3(void *pvParameters)
                 &imuFrame.imu_ax[4], &imuFrame.imu_ay[4], &imuFrame.imu_az[4],
                 &imuFrame.imu_gx[4], &imuFrame.imu_gy[4], &imuFrame.imu_gz[4]);
 
-/*
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_RESET);
-			HAL_SPI_Transmit(&hspi3, &reg, 1, HAL_MAX_DELAY);
-			HAL_SPI_Receive(&hspi3, buf, 14, HAL_MAX_DELAY);
-			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_5, GPIO_PIN_SET);
-
-	        imuFrame.imu_ax[5] = (int16_t)((buf[0]<<8)|buf[1]);
-	        imuFrame.imu_ay[5] = (int16_t)((buf[2]<<8)|buf[3]);
-	        imuFrame.imu_az[5] = (int16_t)((buf[4]<<8)|buf[5]);
-	        imuFrame.imu_gx[5] = (int16_t)((buf[8]<<8)|buf[9]);
-	        imuFrame.imu_gy[5] = (int16_t)((buf[10]<<8)|buf[11]);
-	        imuFrame.imu_gz[5] = (int16_t)((buf[12]<<8)|buf[13]);
-
-            imuFrame.tick[5] = tick_now; // tick 저장 (같은 시점)
-*/
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
     	}
         vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
@@ -989,12 +1029,21 @@ void imu_store(void *pvParameters)
         // IMU 3개 완료 신호 기다림
         if (xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE &&
             xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE &&
+            xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE &&
+            xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE &&
             xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE)
         {
             // 🔒 보호구역 시작
             xSemaphoreTake(imuSyncSem, portMAX_DELAY);
-            if (sensingEnabled)  // 🔹 버튼 OFF 중간엔 저장 중단
+            if (sensingEnabled){  // 🔹 버튼 OFF 중간엔 저장 중단
+            	printf("[IMU1] %d,%d,%d | [IMU2] %d,%d,%d | [IMU3] %d,%d,%d | [IMU4] %d,%d,%d | [IMU5] %d,%d,%d\r\n",
+            	    imuFrame.imu_ax[0], imuFrame.imu_ay[0], imuFrame.imu_az[0],
+            	    imuFrame.imu_ax[1], imuFrame.imu_ay[1], imuFrame.imu_az[1],
+            	    imuFrame.imu_ax[2], imuFrame.imu_ay[2], imuFrame.imu_az[2],
+            	    imuFrame.imu_ax[3], imuFrame.imu_ay[3], imuFrame.imu_az[3],
+            	    imuFrame.imu_ax[4], imuFrame.imu_ay[4], imuFrame.imu_az[4]);
                 store_current_imu_frame(imu_buffer, frame_count);
+            }
             xSemaphoreGive(imuSyncSem);
             // 🔒 보호구역 끝
 
@@ -1016,67 +1065,77 @@ void imu_store(void *pvParameters)
             printf("■ Recording manually stopped (%d frames)\r\n", frame_count);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
 void IMU_MODEL(void *pvParameters)
 {
     for (;;)
     {
-    	//AI_Sanity_ZeroInputOnce();
         if (recording_done)
         {
-            printf("🤖 [AI_MODEL] Processing inference (RAW→L=%d AvgPool)...\r\n", L_TARGET);
+            printf("🤖 [AI_MODEL] Processing inference (LinearResample→Zscore, L=%d)\r\n", TCN_L);
 
-            // 1) RAW 스냅샷
+            // 1) RAW 스냅샷 복사 (LSB 원값 그대로, float32)
             xSemaphoreTake(imuSyncSem, portMAX_DELAY);
             uint16_t len = frame_count;
             if (len > MAX_FRAMES) len = MAX_FRAMES;
 
-            static float tmp_raw[MAX_FRAMES][FRAME_CHANNELS];
             for (uint16_t i = 0; i < len; ++i)
                 for (int c = 0; c < FRAME_CHANNELS; ++c)
-                    tmp_raw[i][c] = (float)imu_buffer[i][c]; // ★ LSB 원값 그대로
+                    tmp_raw[i][c] = (float)imu_buffer[i][c];
             xSemaphoreGive(imuSyncSem);
 
-            // 2) 파이썬과 동일: T>100 → 구간 평균 축소, T<100 → 0패딩, T=100 → 그대로
-            reduce_or_pad_to_L_raw(tmp_raw, len, ai_input_buffer);
+            // 2) ★ 파이썬과 동일 전처리 ★
+            // 2-1) 선형보간 리샘플: [len,30] → [128,30]
+            linear_resample_LC(&tmp_raw[0][0], (int)len, FRAME_CHANNELS,
+                               &ai_input_buffer[0][0], TCN_L);
 
-            // 3) 디버깅: 합/제곱합/CRC 찍기(파이썬과 텐서 동일성 확인용)
-            print_fp(ai_input_buffer, L_TARGET*FRAME_CHANNELS);
+            diag_prenorm_range(&ai_input_buffer[0][0], TCN_L, TCN_C, /*var_thr=*/1e-3f);
+            diag_zbias_top5(&ai_input_buffer[0][0], TCN_L, TCN_C);
+            diag_imu_activity(&ai_input_buffer[0][0], TCN_L, TCN_C);
+            // 2-2) 채널별 z-score 정규화: (x-μ)/σ, μ/σ는 JSON에서 생성된 값이 C에 내장됨
+            tcn_normalize_inplace(&ai_input_buffer[0][0], TCN_L, TCN_C);
 
-            // 4) 캐시 정리 → 추론 → 캐시 무효화
+            print_ch_stats(&ai_input_buffer[0][0], TCN_L, TCN_C);
+            // (선택) 디버그: 합/제곱합으로 동등성 점검
+            /*
+            double s=0, q=0;
+            for (int i=0;i<TCN_L;i++)
+              for (int c=0;c<TCN_C;c++){
+                float v = ai_input_buffer[i][c];
+                s += v; q += (double)v*v;
+              }
+            printf("[DBG] sum=%.6f, sqsum=%.6f\r\n", s, q);
+            */
+            debug_tensor_fp32(&ai_input_buffer[0][0], TCN_L * TCN_C);
+
+            // 3) 추론 실행
             dcache_clean(ai_input_buffer, sizeof(ai_input_buffer));
-            AI_Run(ai_input_buffer, ai_output_buffer);
-            dcache_invalidate(ai_output_buffer, sizeof(ai_output_buffer));
+            AI_Run(&ai_input_buffer[0][0], &ai_output_buffer[0]);
 
-            // 5) 결과 출력 (2클래스: p0, p1)
-            printf("[Y] p0=%.6f  p1=%.6f\r\n", ai_output_buffer[0], ai_output_buffer[1]);
-            int best_idx = (ai_output_buffer[1] > ai_output_buffer[0]) ? 1 : 0;
-            float best_val = ai_output_buffer[best_idx];
-            printf("➡️ Predicted class = %d (%.2f%%)\r\n", best_idx, best_val * 100.0f);
+            float sum = 0.f;
+            for (int i = 0; i < NCLS; ++i) sum += ai_output_buffer[i];
 
-            // 6) 상태 초기화
+            printf("sum=%.6f\r\n", sum);  // ≈ 1.0 이면 정상
+
+            // 4) 결과
+            int best = 0; float bv = ai_output_buffer[0];
+            for (int k = 1; k < NCLS; ++k)
+                if (ai_output_buffer[k] > bv) { best = k; bv = ai_output_buffer[k]; }
+            printf("[Y] p0=%.6f p1=%.6f p2=%.6f | pred=%d (%.2f%%)\r\n",
+                   ai_output_buffer[0], ai_output_buffer[1], ai_output_buffer[2],
+                   best, bv*100.0f);
+
+            // 5) 상태 초기화
             frame_count    = 0;
             recording_done = false;
             sensingEnabled = false;
-
-            printf("[AI_MODEL] Done. Waiting for next motion.\r\n\n");
+            printf("[AI_MODEL] Done.\r\n\n");
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -1181,7 +1240,7 @@ Error_Handler();
   uartMtx = xSemaphoreCreateMutex();
   configASSERT(uartMtx != NULL);
 
-  dataReadySem = xSemaphoreCreateCounting(3, 0);
+  dataReadySem = xSemaphoreCreateCounting(5, 0);
   configASSERT(dataReadySem != NULL);
 
   uartTxDoneSem = xSemaphoreCreateBinary();
@@ -1203,10 +1262,10 @@ Error_Handler();
     } while (0)
 
   // ---- 여기부터 네 코드 교체 ----
-  CREATE_TASK(Read_imu1,  "Read_imu1",  512, 2);
-  CREATE_TASK(Read_imu2,  "Read_imu2",  512, 2);
-  CREATE_TASK(Read_imu3,  "Read_imu3",  512, 2);
-  CREATE_TASK(imu_store,  "imu_store",  512, 2);
+  xTaskCreate(Read_imu1,"Read_imu1",512,NULL,2,NULL);
+  xTaskCreate(Read_imu2,"Read_imu2",512,NULL,2,NULL);
+  xTaskCreate(Read_imu3,"Read_imu3",512,NULL,2,NULL);
+  xTaskCreate(imu_store,"imu_store",512, NULL,3, NULL);
 
   /* IMU_MODEL은 printf 많음 → 1536 words(=6KB)면 보통 충분 */
   CREATE_TASK(IMU_MODEL,  "IMU_MODEL",  1536, 2);

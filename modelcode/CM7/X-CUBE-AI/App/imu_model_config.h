@@ -3,7 +3,7 @@
   ******************************************************************************
   * @file    imu_model_config.h
   * @author  AST Embedded Analytics Research Platform
-  * @date    2025-11-05T23:13:59+0900
+  * @date    2025-11-11T01:10:21+0900
   * @brief   AI Tool Automatic Code Generator for Custom Layers Implementation
   ******************************************************************************
   * @attention
