@@ -82,7 +82,8 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOE_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, imu_cs1_Pin|imu_cs2_Pin|imu_cs4_Pin|imu_cs5_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD, imu_cs1_Pin|imu_cs2_Pin|imu_cs3_Pin|imu_cs4_Pin
+                          |imu_cs5_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : PD8 PD9 */
   GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
@@ -92,8 +93,10 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF7_USART3;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : imu_cs1_Pin imu_cs2_Pin imu_cs4_Pin imu_cs5_Pin */
-  GPIO_InitStruct.Pin = imu_cs1_Pin|imu_cs2_Pin|imu_cs4_Pin|imu_cs5_Pin;
+  /*Configure GPIO pins : imu_cs1_Pin imu_cs2_Pin imu_cs3_Pin imu_cs4_Pin
+                           imu_cs5_Pin */
+  GPIO_InitStruct.Pin = imu_cs1_Pin|imu_cs2_Pin|imu_cs3_Pin|imu_cs4_Pin
+                          |imu_cs5_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;

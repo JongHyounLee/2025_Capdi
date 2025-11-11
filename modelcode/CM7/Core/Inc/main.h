@@ -67,6 +67,8 @@ void Error_Handler(void);
 #define imu_cs1_GPIO_Port GPIOD
 #define imu_cs2_Pin GPIO_PIN_1
 #define imu_cs2_GPIO_Port GPIOD
+#define imu_cs3_Pin GPIO_PIN_2
+#define imu_cs3_GPIO_Port GPIOD
 #define imu_cs4_Pin GPIO_PIN_3
 #define imu_cs4_GPIO_Port GPIOD
 #define imu_cs5_Pin GPIO_PIN_4

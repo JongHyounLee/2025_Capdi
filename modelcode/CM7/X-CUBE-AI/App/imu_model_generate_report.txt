@@ -1,30 +1,30 @@
 ST Edge AI Core v2.2.0-20266 2adc00962
-Created date          : 2025-11-11 01:10:21
-Parameters            : generate --target stm32h7 --name imu_model -m C:/Users/hjl99/Desktop/IMU_model/final_export_cubeai.h5 --compression none --verbosity 1 --workspace C:/Users/hjl99/AppData/Local/Temp/mxAI_workspace31080632879070011947913590089982784 --output C:/Users/hjl99/.stm32cubemx/imu_model_output
+Created date          : 2025-11-11 18:06:28
+Parameters            : generate --target stm32h7 --name imu_model -m C:/Users/hjl99/Desktop/IMU_model/final_export_cubeai.h5 --compression none --verbosity 1 --workspace C:/Users/hjl99/AppData/Local/Temp/mxAI_workspace3717767229405001383738030246069432 --output C:/Users/hjl99/.stm32cubemx/imu_model_output
 
 Exec/report summary (generate)
--------------------------------------------------------------------------------------------------------------
-model file         :   C:\Users\hjl99\Desktop\IMU_model\final_export_cubeai.h5                               
-type               :   keras                                                                                 
-c_name             :   imu_model                                                                             
-compression        :   none                                                                                  
-options            :   allocate-inputs, allocate-outputs                                                     
-optimization       :   balanced                                                                              
-target/series      :   stm32h7                                                                               
-workspace dir      :   C:\Users\hjl99\AppData\Local\Temp\mxAI_workspace31080632879070011947913590089982784   
-output dir         :   C:\Users\hjl99\.stm32cubemx\imu_model_output                                          
-model_fmt          :   float                                                                                 
-model_name         :   final_export_cubeai                                                                   
-model_hash         :   0x96d1e32abf0fc8ac3ef8b3f697ed3852                                                    
-params #           :   15,331 items (59.89 KiB)                                                              
--------------------------------------------------------------------------------------------------------------
-input 1/1          :   'imu', f32(1x128x30), 15.00 KBytes, activations                                       
-output 1/1         :   'dense', f32(1x3), 12 Bytes, activations                                              
-macc               :   1,945,840                                                                             
-weights (ro)       :   60,940 B (59.51 KiB) (1 segment) / -384(-0.6%) vs float model                         
-activations (rw)   :   33,920 B (33.12 KiB) (1 segment) *                                                    
-ram (total)        :   33,920 B (33.12 KiB) = 33,920 + 0 + 0                                                 
--------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------
+model file         :   C:\Users\hjl99\Desktop\IMU_model\final_export_cubeai.h5                              
+type               :   keras                                                                                
+c_name             :   imu_model                                                                            
+compression        :   none                                                                                 
+options            :   allocate-inputs, allocate-outputs                                                    
+optimization       :   balanced                                                                             
+target/series      :   stm32h7                                                                              
+workspace dir      :   C:\Users\hjl99\AppData\Local\Temp\mxAI_workspace3717767229405001383738030246069432   
+output dir         :   C:\Users\hjl99\.stm32cubemx\imu_model_output                                         
+model_fmt          :   float                                                                                
+model_name         :   final_export_cubeai                                                                  
+model_hash         :   0x96d1e32abf0fc8ac3ef8b3f697ed3852                                                   
+params #           :   15,331 items (59.89 KiB)                                                             
+------------------------------------------------------------------------------------------------------------
+input 1/1          :   'imu', f32(1x128x30), 15.00 KBytes, activations                                      
+output 1/1         :   'dense', f32(1x3), 12 Bytes, activations                                             
+macc               :   1,945,840                                                                            
+weights (ro)       :   60,940 B (59.51 KiB) (1 segment) / -384(-0.6%) vs float model                        
+activations (rw)   :   33,920 B (33.12 KiB) (1 segment) *                                                   
+ram (total)        :   33,920 B (33.12 KiB) = 33,920 + 0 + 0                                                
+------------------------------------------------------------------------------------------------------------
 (*) 'input'/'output' buffers are allocated in the activations buffer
 
 Model name - final_export_cubeai

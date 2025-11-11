@@ -30,6 +30,15 @@
 // ★ 전처리 C파일을 프로젝트에 추가한 상태에서
 #include "cubeai_preprocess.h"   // TCN_L(=128), TCN_C(=30), 리샘플/정규화 함수
 
+#include "event_groups.h"
+static EventGroupHandle_t imuEvt;
+#define IMU1_RDY (1u<<0)
+#define IMU2_RDY (1u<<1)
+#define IMU3_RDY (1u<<2)
+#define IMU4_RDY (1u<<3)
+#define IMU5_RDY (1u<<4)
+#define IMU_ALL  (IMU1_RDY|IMU2_RDY|IMU3_RDY|IMU4_RDY|IMU5_RDY)
+
 #ifndef MAX_FRAMES
 #define MAX_FRAMES 512   // 50Hz 기준 최대 약 10.2초 버퍼
 #endif
@@ -871,7 +880,7 @@ void Read_imu1(void *pvParameters)
 {
 
     uint8_t buf[14];
-	uint8_t reg = 0x3B | 0x80;
+    uint8_t reg = 0x3B | 0x80;  // Read only, 시작주소=0x3B
     TickType_t tick_now;
     for(;;)
     {
@@ -885,38 +894,59 @@ void Read_imu1(void *pvParameters)
     		HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
 
-            imuFrame.imu_ax[0] = (int16_t)((buf[0]<<8)|buf[1]);
-            imuFrame.imu_ay[0] = (int16_t)((buf[2]<<8)|buf[3]);
-            imuFrame.imu_az[0] = (int16_t)((buf[4]<<8)|buf[5]);
-            imuFrame.imu_gx[0] = (int16_t)((buf[8]<<8)|buf[9]);
-            imuFrame.imu_gy[0] = (int16_t)((buf[10]<<8)|buf[11]);
-            imuFrame.imu_gz[0] = (int16_t)((buf[12]<<8)|buf[13]);
+    		// 1) 로컬로 파싱
+    		int16_t ax = (int16_t)((buf[0]<<8)|buf[1]);
+    		int16_t ay = (int16_t)((buf[2]<<8)|buf[3]);
+    		int16_t az = (int16_t)((buf[4]<<8)|buf[5]);
+    		int16_t gx = (int16_t)((buf[8]<<8)|buf[9]);
+    		int16_t gy = (int16_t)((buf[10]<<8)|buf[11]);
+    		int16_t gz = (int16_t)((buf[12]<<8)|buf[13]);
 
-            imuFrame.tick[0] = tick_now; // tick 저장
             // ... 기존 파싱 코드 바로 아래에 추가
             // IMU1 읽은 직후
-            spike_filter_apply_v(0,
-                &imuFrame.imu_ax[0], &imuFrame.imu_ay[0], &imuFrame.imu_az[0],
-                &imuFrame.imu_gx[0], &imuFrame.imu_gy[0], &imuFrame.imu_gz[0]);
+            // 2) 로컬 변수 주소로 필터 적용 (imuFrame에 직접 쓰지 않음)
+            spike_filter_apply_v(0, &ax, &ay, &az, &gx, &gy, &gz);
 
+            xSemaphoreTake(imuSyncSem, portMAX_DELAY);
+            imuFrame.imu_ax[0] = ax;
+            imuFrame.imu_ay[0] = ay;
+            imuFrame.imu_az[0] = az;
+            imuFrame.imu_gx[0] = gx;
+            imuFrame.imu_gy[0] = gy;
+            imuFrame.imu_gz[0] = gz;
+            imuFrame.tick[0]   = tick_now;
+            xSemaphoreGive(imuSyncSem);
+
+            xEventGroupSetBits(imuEvt, IMU1_RDY);
             xSemaphoreGive(dataReadySem);
+
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
 			HAL_SPI_Receive(&hspi1, buf, 14, HAL_MAX_DELAY);
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
 
-	        imuFrame.imu_ax[1] = (int16_t)((buf[0]<<8)|buf[1]);
-	        imuFrame.imu_ay[1] = (int16_t)((buf[2]<<8)|buf[3]);
-	        imuFrame.imu_az[1] = (int16_t)((buf[4]<<8)|buf[5]);
-	        imuFrame.imu_gx[1] = (int16_t)((buf[8]<<8)|buf[9]);
-	        imuFrame.imu_gy[1] = (int16_t)((buf[10]<<8)|buf[11]);
-	        imuFrame.imu_gz[1] = (int16_t)((buf[12]<<8)|buf[13]);
+			// 1) 로컬로 파싱
+			ax = (int16_t)((buf[0]<<8)|buf[1]);
+			ay = (int16_t)((buf[2]<<8)|buf[3]);
+			az = (int16_t)((buf[4]<<8)|buf[5]);
+			gx = (int16_t)((buf[8]<<8)|buf[9]);
+			gy = (int16_t)((buf[10]<<8)|buf[11]);
+			gz = (int16_t)((buf[12]<<8)|buf[13]);
 
-	        imuFrame.tick[1] = tick_now; // tick 저장 (같은 시점)
 	        // IMU2 읽은 직후
-	        spike_filter_apply_v(1,
-	            &imuFrame.imu_ax[1], &imuFrame.imu_ay[1], &imuFrame.imu_az[1],
-	            &imuFrame.imu_gx[1], &imuFrame.imu_gy[1], &imuFrame.imu_gz[1]);
+	        spike_filter_apply_v(1, &ax, &ay, &az, &gx, &gy, &gz);
+
+	        // 3) 최종 쓰기만 보호
+	        xSemaphoreTake(imuSyncSem, portMAX_DELAY);
+	        imuFrame.imu_ax[1] = ax;
+	        imuFrame.imu_ay[1] = ay;
+	        imuFrame.imu_az[1] = az;
+	        imuFrame.imu_gx[1] = gx;
+	        imuFrame.imu_gy[1] = gy;
+	        imuFrame.imu_gz[1] = gz;
+	        imuFrame.tick[1]  = tick_now;
+	        xSemaphoreGive(imuSyncSem);
+	        xEventGroupSetBits(imuEvt, IMU2_RDY);
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
     	}
@@ -926,9 +956,8 @@ void Read_imu1(void *pvParameters)
 
 void Read_imu2(void *pvParameters)
 {
-
     uint8_t buf[14];
-	uint8_t reg = 0x3B | 0x80;
+    uint8_t reg = 0x3B | 0x80;  // Read only, 시작주소=0x3B
 	TickType_t tick_now;
 
     for(;;)
@@ -941,37 +970,57 @@ void Read_imu2(void *pvParameters)
     		HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
     		HAL_SPI_Receive(&hspi2, buf, 14, HAL_MAX_DELAY);
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+			// 1) 로컬로 파싱
+			int16_t ax = (int16_t)((buf[0]<<8)|buf[1]);
+			int16_t ay = (int16_t)((buf[2]<<8)|buf[3]);
+			int16_t az = (int16_t)((buf[4]<<8)|buf[5]);
+			int16_t gx = (int16_t)((buf[8]<<8)|buf[9]);
+			int16_t gy = (int16_t)((buf[10]<<8)|buf[11]);
+			int16_t gz = (int16_t)((buf[12]<<8)|buf[13]);
 
-            imuFrame.imu_ax[2] = (int16_t)((buf[0]<<8)|buf[1]);
-            imuFrame.imu_ay[2] = (int16_t)((buf[2]<<8)|buf[3]);
-            imuFrame.imu_az[2] = (int16_t)((buf[4]<<8)|buf[5]);
-            imuFrame.imu_gx[2] = (int16_t)((buf[8]<<8)|buf[9]);
-            imuFrame.imu_gy[2] = (int16_t)((buf[10]<<8)|buf[11]);
-            imuFrame.imu_gz[2] = (int16_t)((buf[12]<<8)|buf[13]);
+	        // IMU2 읽은 직후
+	        spike_filter_apply_v(2, &ax, &ay, &az, &gx, &gy, &gz);
 
-            imuFrame.tick[2] = tick_now; // tick 저장
-            spike_filter_apply_v(2,
-                &imuFrame.imu_ax[2], &imuFrame.imu_ay[2], &imuFrame.imu_az[2],
-                &imuFrame.imu_gx[2], &imuFrame.imu_gy[2], &imuFrame.imu_gz[2]);
+	        // 3) 최종 쓰기만 보호
+	        xSemaphoreTake(imuSyncSem, portMAX_DELAY);
+	        imuFrame.imu_ax[2] = ax;
+	        imuFrame.imu_ay[2] = ay;
+	        imuFrame.imu_az[2] = az;
+	        imuFrame.imu_gx[2] = gx;
+	        imuFrame.imu_gy[2] = gy;
+	        imuFrame.imu_gz[2] = gz;
+	        imuFrame.tick[2]  = tick_now;
+	        xSemaphoreGive(imuSyncSem);
+	        xEventGroupSetBits(imuEvt, IMU3_RDY);
+
             xSemaphoreGive(dataReadySem);
 
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
 			HAL_SPI_Receive(&hspi2, buf, 14, HAL_MAX_DELAY);
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+			// 1) 로컬로 파싱
+			ax = (int16_t)((buf[0]<<8)|buf[1]);
+			ay = (int16_t)((buf[2]<<8)|buf[3]);
+			az = (int16_t)((buf[4]<<8)|buf[5]);
+			gx = (int16_t)((buf[8]<<8)|buf[9]);
+			gy = (int16_t)((buf[10]<<8)|buf[11]);
+			gz = (int16_t)((buf[12]<<8)|buf[13]);
 
-	        imuFrame.imu_ax[3] = (int16_t)((buf[0]<<8)|buf[1]);
-	        imuFrame.imu_ay[3] = (int16_t)((buf[2]<<8)|buf[3]);
-	        imuFrame.imu_az[3] = (int16_t)((buf[4]<<8)|buf[5]);
-	        imuFrame.imu_gx[3] = (int16_t)((buf[8]<<8)|buf[9]);
-	        imuFrame.imu_gy[3] = (int16_t)((buf[10]<<8)|buf[11]);
-	        imuFrame.imu_gz[3] = (int16_t)((buf[12]<<8)|buf[13]);
+	        // IMU2 읽은 직후
+	        spike_filter_apply_v(3, &ax, &ay, &az, &gx, &gy, &gz);
 
-            imuFrame.tick[3] = tick_now; // tick 저장 (같은 시점)
-
-            spike_filter_apply_v(3,
-                &imuFrame.imu_ax[3], &imuFrame.imu_ay[3], &imuFrame.imu_az[3],
-                &imuFrame.imu_gx[3], &imuFrame.imu_gy[3], &imuFrame.imu_gz[3]);
+	        // 3) 최종 쓰기만 보호
+	        xSemaphoreTake(imuSyncSem, portMAX_DELAY);
+	        imuFrame.imu_ax[3] = ax;
+	        imuFrame.imu_ay[3] = ay;
+	        imuFrame.imu_az[3] = az;
+	        imuFrame.imu_gx[3] = gx;
+	        imuFrame.imu_gy[3] = gy;
+	        imuFrame.imu_gz[3] = gz;
+	        imuFrame.tick[3]  = tick_now;
+	        xSemaphoreGive(imuSyncSem);
+	        xEventGroupSetBits(imuEvt, IMU4_RDY);
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
     	}
@@ -983,7 +1032,7 @@ void Read_imu3(void *pvParameters)
 {
 
     uint8_t buf[14];
-	uint8_t reg = 0x3B | 0x80;
+    uint8_t reg = 0x3B | 0x80;  // Read only, 시작주소=0x3B
     TickType_t tick_now;
 
 
@@ -999,17 +1048,28 @@ void Read_imu3(void *pvParameters)
     		HAL_SPI_Receive(&hspi3, buf, 14, HAL_MAX_DELAY);
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
 
-            imuFrame.imu_ax[4] = (int16_t)((buf[0]<<8)|buf[1]);
-            imuFrame.imu_ay[4] = (int16_t)((buf[2]<<8)|buf[3]);
-            imuFrame.imu_az[4] = (int16_t)((buf[4]<<8)|buf[5]);
-            imuFrame.imu_gx[4] = (int16_t)((buf[8]<<8)|buf[9]);
-            imuFrame.imu_gy[4] = (int16_t)((buf[10]<<8)|buf[11]);
-            imuFrame.imu_gz[4] = (int16_t)((buf[12]<<8)|buf[13]);
+			// 1) 로컬로 파싱
+			int16_t ax = (int16_t)((buf[0]<<8)|buf[1]);
+			int16_t ay = (int16_t)((buf[2]<<8)|buf[3]);
+			int16_t az = (int16_t)((buf[4]<<8)|buf[5]);
+			int16_t gx = (int16_t)((buf[8]<<8)|buf[9]);
+			int16_t gy = (int16_t)((buf[10]<<8)|buf[11]);
+			int16_t gz = (int16_t)((buf[12]<<8)|buf[13]);
 
-            imuFrame.tick[4] = tick_now; // tick 저장
-            spike_filter_apply_v(4,
-                &imuFrame.imu_ax[4], &imuFrame.imu_ay[4], &imuFrame.imu_az[4],
-                &imuFrame.imu_gx[4], &imuFrame.imu_gy[4], &imuFrame.imu_gz[4]);
+	        // IMU2 읽은 직후
+	        spike_filter_apply_v(4, &ax, &ay, &az, &gx, &gy, &gz);
+
+	        // 3) 최종 쓰기만 보호
+	        xSemaphoreTake(imuSyncSem, portMAX_DELAY);
+	        imuFrame.imu_ax[4] = ax;
+	        imuFrame.imu_ay[4] = ay;
+	        imuFrame.imu_az[4] = az;
+	        imuFrame.imu_gx[4] = gx;
+	        imuFrame.imu_gy[4] = gy;
+	        imuFrame.imu_gz[4] = gz;
+	        imuFrame.tick[4]  = tick_now;
+	        xSemaphoreGive(imuSyncSem);
+	        xEventGroupSetBits(imuEvt, IMU5_RDY);
 
 	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
     	}
@@ -1026,13 +1086,14 @@ void imu_store(void *pvParameters)
             continue;
         }
 
-        // IMU 3개 완료 신호 기다림
-        if (xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE &&
-            xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE &&
-            xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE &&
-            xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE &&
-            xSemaphoreTake(dataReadySem, pdMS_TO_TICKS(100)) == pdTRUE)
-        {
+        EventBits_t bits = xEventGroupWaitBits(
+            imuEvt,          // 이벤트 그룹
+            IMU_ALL,         // 기다릴 비트(5개 모두)
+            pdTRUE,          // clearOnExit: 저장 후 비트 자동 클리어
+            pdTRUE,          // waitForAllBits: 모두 모일 때까지 대기
+            pdMS_TO_TICKS(200)  // 타임아웃(필요시 조정)
+        );
+        	if ((bits & IMU_ALL) == IMU_ALL){
             // 🔒 보호구역 시작
             xSemaphoreTake(imuSyncSem, portMAX_DELAY);
             if (sensingEnabled){  // 🔹 버튼 OFF 중간엔 저장 중단
@@ -1042,6 +1103,11 @@ void imu_store(void *pvParameters)
             	    imuFrame.imu_ax[2], imuFrame.imu_ay[2], imuFrame.imu_az[2],
             	    imuFrame.imu_ax[3], imuFrame.imu_ay[3], imuFrame.imu_az[3],
             	    imuFrame.imu_ax[4], imuFrame.imu_ay[4], imuFrame.imu_az[4]);
+            	printf("[TICK] %lu | t1=%lu t2=%lu t3=%lu t4=%lu t5=%lu\r\n",
+            	       HAL_GetTick(),
+            	       (uint32_t)imuFrame.tick[0], (uint32_t)imuFrame.tick[1],
+            	       (uint32_t)imuFrame.tick[2], (uint32_t)imuFrame.tick[3],
+            	       (uint32_t)imuFrame.tick[4]);
                 store_current_imu_frame(imu_buffer, frame_count);
             }
             xSemaphoreGive(imuSyncSem);
@@ -1249,6 +1315,9 @@ Error_Handler();
   imuSyncSem = xSemaphoreCreateMutex();
   configASSERT(imuSyncSem != NULL);
 
+  imuEvt = xEventGroupCreate();
+  configASSERT(imuEvt != NULL);
+
   // 실패 시 바로 알게 하기 (간단버전)
   #define CREATE_TASK(fn, name, stack, prio)                                  \
     do {                                                                       \
@@ -1262,10 +1331,10 @@ Error_Handler();
     } while (0)
 
   // ---- 여기부터 네 코드 교체 ----
-  xTaskCreate(Read_imu1,"Read_imu1",512,NULL,2,NULL);
-  xTaskCreate(Read_imu2,"Read_imu2",512,NULL,2,NULL);
-  xTaskCreate(Read_imu3,"Read_imu3",512,NULL,2,NULL);
-  xTaskCreate(imu_store,"imu_store",512, NULL,3, NULL);
+  xTaskCreate(Read_imu1,"Read_imu1",768,NULL,2,NULL);
+  xTaskCreate(Read_imu2,"Read_imu2",768,NULL,2,NULL);
+  xTaskCreate(Read_imu3,"Read_imu3",768,NULL,2,NULL);
+  xTaskCreate(imu_store,"imu_store",768, NULL,1, NULL);
 
   /* IMU_MODEL은 printf 많음 → 1536 words(=6KB)면 보통 충분 */
   CREATE_TASK(IMU_MODEL,  "IMU_MODEL",  1536, 2);
