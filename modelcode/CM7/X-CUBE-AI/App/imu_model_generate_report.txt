@@ -1,6 +1,6 @@
 ST Edge AI Core v2.2.0-20266 2adc00962
-Created date          : 2025-11-11 18:06:28
-Parameters            : generate --target stm32h7 --name imu_model -m C:/Users/hjl99/Desktop/IMU_model/final_export_cubeai.h5 --compression none --verbosity 1 --workspace C:/Users/hjl99/AppData/Local/Temp/mxAI_workspace3717767229405001383738030246069432 --output C:/Users/hjl99/.stm32cubemx/imu_model_output
+Created date          : 2025-11-11 22:04:51
+Parameters            : generate --target stm32h7 --name imu_model -m C:/Users/hjl99/Desktop/IMU_model/final_export_cubeai.h5 --compression none --verbosity 1 --workspace C:/Users/hjl99/AppData/Local/Temp/mxAI_workspace3860789581927009605551626579442728 --output C:/Users/hjl99/.stm32cubemx/imu_model_output
 
 Exec/report summary (generate)
 ------------------------------------------------------------------------------------------------------------
@@ -11,7 +11,7 @@ compression        :   none
 options            :   allocate-inputs, allocate-outputs                                                    
 optimization       :   balanced                                                                             
 target/series      :   stm32h7                                                                              
-workspace dir      :   C:\Users\hjl99\AppData\Local\Temp\mxAI_workspace3717767229405001383738030246069432   
+workspace dir      :   C:\Users\hjl99\AppData\Local\Temp\mxAI_workspace3860789581927009605551626579442728   
 output dir         :   C:\Users\hjl99\.stm32cubemx\imu_model_output                                         
 model_fmt          :   float                                                                                
 model_name         :   final_export_cubeai                                                                  

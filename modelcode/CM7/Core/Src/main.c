@@ -31,7 +31,18 @@
 #include "cubeai_preprocess.h"   // TCN_L(=128), TCN_C(=30), 리샘플/정규화 함수
 
 #include "event_groups.h"
-static EventGroupHandle_t imuEvt;
+// 맨 위 근처 전역에 배치
+#ifndef UART_BUF_SIZE
+#define UART_BUF_SIZE 1024
+#endif
+
+__attribute__((section(".RAM_D2"), aligned(32)))
+static uint8_t uartDmaBuf[UART_BUF_SIZE];
+
+
+static TaskHandle_t hStoreTask = NULL;
+static TaskHandle_t hModelTask = NULL;  // IMU_MODEL 핸들
+static volatile uint8_t modelBusy = 0;
 #define IMU1_RDY (1u<<0)
 #define IMU2_RDY (1u<<1)
 #define IMU3_RDY (1u<<2)
@@ -116,7 +127,23 @@ typedef struct {
 volatile IMU_Frame_t imuFrame;
 
 SemaphoreHandle_t dataReadySem;
-
+//static void debug_print_imuFrame(const IMU_Frame_t *f)
+//{
+//    printf("====== IMU FRAME ======\r\n");
+//    for (int i = 0; i < 5; i++)  // 현재는 IMU1~IMU5까지만 사용 중
+//    {
+//        printf("IMU%d | AX=%6d  AY=%6d  AZ=%6d  |  GX=%6d  GY=%6d  GZ=%6d  (tick=%lu)\r\n",
+//            i+1,
+//            f->imu_ax[i],
+//            f->imu_ay[i],
+//            f->imu_az[i],
+//            f->imu_gx[i],
+//            f->imu_gy[i],
+//            f->imu_gz[i],
+//            (unsigned long)f->tick[i]);
+//    }
+//    printf("=======================\r\n");
+//}
 
 #define imu_cs1_port GPIOD
 #define imu_cs1_num GPIO_PIN_0
@@ -130,6 +157,122 @@ SemaphoreHandle_t dataReadySem;
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+static inline HAL_StatusTypeDef mpu_read_6axes(
+    SPI_HandleTypeDef *hspi, GPIO_TypeDef *port, uint16_t cs,
+    int16_t *ax, int16_t *ay, int16_t *az,
+    int16_t *gx, int16_t *gy, int16_t *gz)
+{
+    uint8_t tx[15];  // [0]=addr|READ, [1..14]=dummy
+    uint8_t rx[15];  // [0]=dummy, [1..14]=data
+    tx[0] = 0x3B | 0x80; // ACCEL_XOUT_H, read bit
+    for (int i=1;i<15;i++) tx[i] = 0xFF;
+
+    HAL_GPIO_WritePin(port, cs, GPIO_PIN_RESET);
+    HAL_StatusTypeDef st = HAL_SPI_TransmitReceive(hspi, tx, rx, 15, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(port, cs, GPIO_PIN_SET);
+    if (st != HAL_OK) return st;
+
+    // rx[1..14] = AXH,AXL, AYH,AYL, AZH,AZL, TEMP_H,L, GXH,GXL, GYH,GYL, GZH,GZL
+    *ax = (int16_t)((rx[1]  << 8) | rx[2]);
+    *ay = (int16_t)((rx[3]  << 8) | rx[4]);
+    *az = (int16_t)((rx[5]  << 8) | rx[6]);
+    *gx = (int16_t)((rx[9]  << 8) | rx[10]);
+    *gy = (int16_t)((rx[11] << 8) | rx[12]);
+    *gz = (int16_t)((rx[13] << 8) | rx[14]);
+    return HAL_OK;
+}
+static inline uint8_t read_whoami(SPI_HandleTypeDef* h, GPIO_TypeDef* port, uint16_t cs)
+{
+    uint8_t tx[2] = { (uint8_t)(0x75 | 0x80), 0xFF };
+    uint8_t rx[2] = {0};
+    HAL_GPIO_WritePin(port, cs, GPIO_PIN_RESET);
+    HAL_SPI_TransmitReceive(h, tx, rx, 2, HAL_MAX_DELAY); // ★ 한 프레임
+    HAL_GPIO_WritePin(port, cs, GPIO_PIN_SET);
+    return rx[1];
+}
+// ====== IMU 전체 출력 헬퍼 (1~5 모두) ======
+static inline void dcache_clean(void *addr, size_t size) {
+    uintptr_t a = (uintptr_t)addr & ~((uintptr_t)31);
+    size_t    s = ((size + 31U) / 32U) * 32U + ((uintptr_t)addr - a);
+    SCB_CleanDCache_by_Addr((uint32_t*)a, (int32_t)s);
+}
+static HAL_StatusTypeDef uart1_dma_printf(const uint8_t *data, uint16_t len, TickType_t wait)
+{
+    if (len > UART_BUF_SIZE) len = UART_BUF_SIZE;
+    if (xSemaphoreTake(uartMtx, wait) != pdTRUE) return HAL_TIMEOUT;
+
+    // 이전 완료 신호 비우기
+    xSemaphoreTake(uartTxDoneSem, 0);
+
+    // D2 SRAM 버퍼에 복사 + 캐시 클린
+    memcpy(uartDmaBuf, data, len);
+    dcache_clean(uartDmaBuf, len);
+
+    HAL_StatusTypeDef st = HAL_UART_Transmit_DMA(&huart1, uartDmaBuf, len);
+    if (st != HAL_OK) {
+        xSemaphoreGive(uartMtx);
+        return st;
+    }
+
+    // 완료 대기 (타임아웃 시 정리)
+    if (xSemaphoreTake(uartTxDoneSem, wait) != pdTRUE) {
+        HAL_UART_AbortTransmit(&huart1);
+        xSemaphoreGive(uartMtx);
+        return HAL_TIMEOUT;
+    }
+    xSemaphoreGive(uartMtx);
+    return HAL_OK;
+}
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart == &huart1) {
+        BaseType_t hpw = pdFALSE;
+        xSemaphoreGiveFromISR(uartTxDoneSem, &hpw);
+        portYIELD_FROM_ISR(hpw);
+        // 원인 파악에 도움: 여기서 huart->ErrorCode를 찍어도 좋아요.
+    }
+}
+// ====== IMU 전체 출력 헬퍼 (1~5 모두, DMA-printf 사용) ======
+static void print_all_imus_once(void)
+{
+    int16_t ax[5], ay[5], az[5], gx[5], gy[5], gz[5];
+    TickType_t tick[5];
+
+    // 1) 스냅샷 (임계구역 최소화)
+    xSemaphoreTake(imuSyncSem, portMAX_DELAY);
+    for (int i = 0; i < 5; ++i) {
+        ax[i]   = imuFrame.imu_ax[i];
+        ay[i]   = imuFrame.imu_ay[i];
+        az[i]   = imuFrame.imu_az[i];
+        gx[i]   = imuFrame.imu_gx[i];
+        gy[i]   = imuFrame.imu_gy[i];
+        gz[i]   = imuFrame.imu_gz[i];
+        tick[i] = imuFrame.tick[i];
+    }
+    xSemaphoreGive(imuSyncSem);
+
+    // 2) 한 번에 찍을 문자열 구성
+    char buf[512];
+    int n = snprintf(buf, sizeof(buf),
+        "IMU1 [%6d %6d %6d | %6d %6d %6d] tick=%lu\r\n"
+        "IMU2 [%6d %6d %6d | %6d %6d %6d] tick=%lu\r\n"
+        "IMU3 [%6d %6d %6d | %6d %6d %6d] tick=%lu\r\n"
+        "IMU4 [%6d %6d %6d | %6d %6d %6d] tick=%lu\r\n"
+        "IMU5 [%6d %6d %6d | %6d %6d %6d] tick=%lu\r\n",
+        ax[0],ay[0],az[0], gx[0],gy[0],gz[0], (unsigned long)tick[0],
+        ax[1],ay[1],az[1], gx[1],gy[1],gz[1], (unsigned long)tick[1],
+        ax[2],ay[2],az[2], gx[2],gy[2],gz[2], (unsigned long)tick[2],
+        ax[3],ay[3],az[3], gx[3],gy[3],gz[3], (unsigned long)tick[3],
+        ax[4],ay[4],az[4], gx[4],gy[4],gz[4], (unsigned long)tick[4]
+    );
+    if (n < 0) return;                    // 포맷 에러
+    if (n > (int)sizeof(buf)) n = sizeof(buf);  // 길이 방어
+
+    // 3) DMA로 전송 (타임아웃은 상황에 맞게 조정)
+    (void)uart1_dma_printf((const uint8_t*)buf, (uint16_t)n, pdMS_TO_TICKS(50));
+}
+
+
 // ===== [DIAG 1] 정규화 전 채널별 min/max/var 요약 =====
 static void diag_prenorm_range(const float *x, int L, int C, float var_thr) {
     // var_thr: 너무 낮은 분산(≈고정 채널) 경고 임계
@@ -537,11 +680,7 @@ static void print_ch_stats(const float *x, int L, int C){
 
 // (선택) 입력 통계 (z-score 아님)
 
-static inline void dcache_clean(void *addr, size_t size) {
-    uintptr_t a = (uintptr_t)addr & ~((uintptr_t)31);
-    size_t    s = ((size + 31U) / 32U) * 32U + ((uintptr_t)addr - a);
-    SCB_CleanDCache_by_Addr((uint32_t*)a, (int32_t)s);
-}
+
 static inline void dcache_invalidate(void *addr, size_t size) {
     uintptr_t a = (uintptr_t)addr & ~((uintptr_t)31);
     size_t    s = ((size + 31U) / 32U) * 32U + ((uintptr_t)addr - a);
@@ -554,18 +693,10 @@ static inline void dcache_invalidate(void *addr, size_t size) {
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart == &huart1) {
-        uartDmaBusy = 0;  // DMA 완료 신호
-    }
-
-	/*
-    if (huart->Instance == USART1)
-    {
-        uartTxDone = 1; // (선택) 폴링용 플래그도 세움
         BaseType_t hpw = pdFALSE;
         xSemaphoreGiveFromISR(uartTxDoneSem, &hpw);
         portYIELD_FROM_ISR(hpw);
     }
-    */
 }
 
 void AI_Create(void)
@@ -620,33 +751,6 @@ void AI_Run(float *input_data, float *output_data)
 }
 
 
-static inline HAL_StatusTypeDef uart1_dma_printf(const uint8_t *data, uint16_t len, TickType_t wait)
-{
-    // UART 자원 잠금 (다른 테스크와 직렬화)
-    if (xSemaphoreTake(uartMtx, wait) != pdTRUE) {
-        return HAL_TIMEOUT;
-    }
-
-    // 세마포어 상태 비움 (이전 완료 신호가 남아있을 수 있음)
-    xSemaphoreTake(uartTxDoneSem, 0);
-
-    HAL_StatusTypeDef st = HAL_UART_Transmit_DMA(&huart1, (uint8_t*)data, len);
-    if (st != HAL_OK) {
-        xSemaphoreGive(uartMtx);
-        return st;
-    }
-
-    // DMA 완료 대기
-    if (xSemaphoreTake(uartTxDoneSem, wait) != pdTRUE) {
-        // 타임아웃이면 전송 중단/정리 고려 (필요시 Abort)
-        HAL_UART_AbortTransmit(&huart1);
-        xSemaphoreGive(uartMtx);
-        return HAL_TIMEOUT;
-    }
-
-    xSemaphoreGive(uartMtx);
-    return HAL_OK;
-}
 
 void store_current_imu_frame(float buffer[][30], uint16_t index)
 {
@@ -679,201 +783,279 @@ void imu_config_setting(void)
     // ---------------- IMU1 (SPI1, PD0) ----------------
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, resetData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, disableI2C, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, wakeData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, pwr2Data, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);  // GYRO DLPF
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, gyroCfg, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, accelCfg, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, accelDlpf, 2, HAL_MAX_DELAY);   // ACCEL DLPF
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, smplrtDiv, 2, HAL_MAX_DELAY);   // 최종 샘플링=50Hz
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     // ---------------- IMU2 (SPI1, PD1) ----------------
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, resetData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, disableI2C, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, wakeData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, pwr2Data, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, configData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, gyroCfg, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, accelCfg, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, accelDlpf, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi1, smplrtDiv, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
+
 
     // ---------------- IMU3 (SPI2, PD2) ----------------
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, resetData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, disableI2C, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, wakeData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, pwr2Data, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, configData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, gyroCfg, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, accelCfg, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, accelDlpf, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, smplrtDiv, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     // ---------------- IMU4 (SPI2, PD3) ----------------
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, resetData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, disableI2C, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, wakeData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, pwr2Data, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, configData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, gyroCfg, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, accelCfg, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, accelDlpf, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi2, smplrtDiv, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(120));     // ★ 100ms 이상
+
 
     // ---------------- IMU5 (SPI3, PD4) ----------------
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, resetData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
     vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, disableI2C, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
     vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, wakeData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, pwr2Data, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, configData, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, gyroCfg, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, accelCfg, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, accelDlpf, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
     HAL_SPI_Transmit(&hspi3, smplrtDiv, 2, HAL_MAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(1));
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(20));
 }
 
 void Read_imu1(void *pvParameters)
@@ -886,7 +1068,6 @@ void Read_imu1(void *pvParameters)
     {
     	if (sensingEnabled)
     	{
-
     		tick_now = xTaskGetTickCount();
 
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
@@ -902,9 +1083,6 @@ void Read_imu1(void *pvParameters)
     		int16_t gy = (int16_t)((buf[10]<<8)|buf[11]);
     		int16_t gz = (int16_t)((buf[12]<<8)|buf[13]);
 
-            // ... 기존 파싱 코드 바로 아래에 추가
-            // IMU1 읽은 직후
-            // 2) 로컬 변수 주소로 필터 적용 (imuFrame에 직접 쓰지 않음)
             spike_filter_apply_v(0, &ax, &ay, &az, &gx, &gy, &gz);
 
             xSemaphoreTake(imuSyncSem, portMAX_DELAY);
@@ -916,9 +1094,9 @@ void Read_imu1(void *pvParameters)
             imuFrame.imu_gz[0] = gz;
             imuFrame.tick[0]   = tick_now;
             xSemaphoreGive(imuSyncSem);
+//            debug_print_imuFrame(imuFrame)
 
-            xEventGroupSetBits(imuEvt, IMU1_RDY);
-            xSemaphoreGive(dataReadySem);
+            xTaskNotify(hStoreTask, IMU1_RDY, eSetBits);
 
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi1, &reg, 1, HAL_MAX_DELAY);
@@ -946,9 +1124,9 @@ void Read_imu1(void *pvParameters)
 	        imuFrame.imu_gz[1] = gz;
 	        imuFrame.tick[1]  = tick_now;
 	        xSemaphoreGive(imuSyncSem);
-	        xEventGroupSetBits(imuEvt, IMU2_RDY);
 
-	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
+	        xTaskNotify(hStoreTask, IMU2_RDY, eSetBits);
+
     	}
         vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
@@ -978,6 +1156,7 @@ void Read_imu2(void *pvParameters)
 			int16_t gy = (int16_t)((buf[10]<<8)|buf[11]);
 			int16_t gz = (int16_t)((buf[12]<<8)|buf[13]);
 
+
 	        // IMU2 읽은 직후
 	        spike_filter_apply_v(2, &ax, &ay, &az, &gx, &gy, &gz);
 
@@ -991,10 +1170,11 @@ void Read_imu2(void *pvParameters)
 	        imuFrame.imu_gz[2] = gz;
 	        imuFrame.tick[2]  = tick_now;
 	        xSemaphoreGive(imuSyncSem);
-	        xEventGroupSetBits(imuEvt, IMU3_RDY);
 
-            xSemaphoreGive(dataReadySem);
+	        xTaskNotify(hStoreTask, IMU3_RDY, eSetBits);
 
+
+	        reg = 0x3B | 0x80;
 			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_3, GPIO_PIN_RESET);
 			HAL_SPI_Transmit(&hspi2, &reg, 1, HAL_MAX_DELAY);
 			HAL_SPI_Receive(&hspi2, buf, 14, HAL_MAX_DELAY);
@@ -1006,6 +1186,7 @@ void Read_imu2(void *pvParameters)
 			gx = (int16_t)((buf[8]<<8)|buf[9]);
 			gy = (int16_t)((buf[10]<<8)|buf[11]);
 			gz = (int16_t)((buf[12]<<8)|buf[13]);
+
 
 	        // IMU2 읽은 직후
 	        spike_filter_apply_v(3, &ax, &ay, &az, &gx, &gy, &gz);
@@ -1020,9 +1201,9 @@ void Read_imu2(void *pvParameters)
 	        imuFrame.imu_gz[3] = gz;
 	        imuFrame.tick[3]  = tick_now;
 	        xSemaphoreGive(imuSyncSem);
-	        xEventGroupSetBits(imuEvt, IMU4_RDY);
 
-	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
+	        xTaskNotify(hStoreTask, IMU4_RDY, eSetBits);
+
     	}
         vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
@@ -1040,7 +1221,6 @@ void Read_imu3(void *pvParameters)
     {
     	if (sensingEnabled)
     	{
-
             tick_now = xTaskGetTickCount();
 
     		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
@@ -1069,142 +1249,153 @@ void Read_imu3(void *pvParameters)
 	        imuFrame.imu_gz[4] = gz;
 	        imuFrame.tick[4]  = tick_now;
 	        xSemaphoreGive(imuSyncSem);
-	        xEventGroupSetBits(imuEvt, IMU5_RDY);
 
-	        xSemaphoreGive(dataReadySem);  // 데이터 읽기 완료 신호
+	        xTaskNotify(hStoreTask, IMU5_RDY, eSetBits);
+
     	}
         vTaskDelay(pdMS_TO_TICKS(20));  // 1000 / 50 = 20ms 주기
     }
 }
-
 void imu_store(void *pvParameters)
 {
+    const TickType_t WAIT_ALL_MS = pdMS_TO_TICKS(35);
+    static TickType_t last_t = 0;
+    static uint32_t   miss_cnt = 0, ok_cnt = 0;
+
     for (;;)
     {
-        if (!sensingEnabled) {
-            vTaskDelay(pdMS_TO_TICKS(10));
+        if (!sensingEnabled) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
+
+        uint32_t acc = 0, got = 0;
+        TickType_t t0 = xTaskGetTickCount();
+        while ((acc & IMU_ALL) != IMU_ALL) {
+            TickType_t remain = WAIT_ALL_MS - (xTaskGetTickCount() - t0);
+            if ((int32_t)remain <= 0) break;
+            if (xTaskNotifyWait(0, IMU_ALL, &got, remain) == pdTRUE) acc |= got;
+        }
+
+        if ((acc & IMU_ALL) != IMU_ALL) miss_cnt++;
+        else ok_cnt++;
+
+        // 스냅샷 저장
+        xSemaphoreTake(imuSyncSem, portMAX_DELAY);
+        store_current_imu_frame(imu_buffer, frame_count);
+       // if ((frame_count % 5) == 0) print_all_imus_once();
+        xSemaphoreGive(imuSyncSem);
+        frame_count++;
+
+        // 20프레임마다 상태 요약
+        if ((frame_count % 20) == 0) {
+            TickType_t now = xTaskGetTickCount();
+            printf("[SYNC] 20frm dt=%lums, ok=%lu miss=%lu\r\n",
+                   (unsigned long)((now - last_t) * portTICK_PERIOD_MS),
+                   (unsigned long)ok_cnt, (unsigned long)miss_cnt);
+            last_t = now;
+            ok_cnt = miss_cnt = 0;
+        }
+
+        // 완료 트리거 (기존 코드 그대로)
+        if (!modelBusy && frame_count >= L_TARGET) {
+            modelBusy = 1; sensingEnabled = false; recording_done = true;
+            HAL_TIM_Base_Stop_IT(&htim6);
+            xTaskNotifyGive(hModelTask);
+            continue;
+        } else if (!modelBusy && frame_count >= MAX_FRAMES) {
+            modelBusy = 1; sensingEnabled = false; recording_done = true;
+            HAL_TIM_Base_Stop_IT(&htim6);
+            xTaskNotifyGive(hModelTask);
+            printf("■ Buffer full (%d frames)\r\n", frame_count);
             continue;
         }
-
-        EventBits_t bits = xEventGroupWaitBits(
-            imuEvt,          // 이벤트 그룹
-            IMU_ALL,         // 기다릴 비트(5개 모두)
-            pdTRUE,          // clearOnExit: 저장 후 비트 자동 클리어
-            pdTRUE,          // waitForAllBits: 모두 모일 때까지 대기
-            pdMS_TO_TICKS(200)  // 타임아웃(필요시 조정)
-        );
-        	if ((bits & IMU_ALL) == IMU_ALL){
-            // 🔒 보호구역 시작
-            xSemaphoreTake(imuSyncSem, portMAX_DELAY);
-            if (sensingEnabled){  // 🔹 버튼 OFF 중간엔 저장 중단
-            	printf("[IMU1] %d,%d,%d | [IMU2] %d,%d,%d | [IMU3] %d,%d,%d | [IMU4] %d,%d,%d | [IMU5] %d,%d,%d\r\n",
-            	    imuFrame.imu_ax[0], imuFrame.imu_ay[0], imuFrame.imu_az[0],
-            	    imuFrame.imu_ax[1], imuFrame.imu_ay[1], imuFrame.imu_az[1],
-            	    imuFrame.imu_ax[2], imuFrame.imu_ay[2], imuFrame.imu_az[2],
-            	    imuFrame.imu_ax[3], imuFrame.imu_ay[3], imuFrame.imu_az[3],
-            	    imuFrame.imu_ax[4], imuFrame.imu_ay[4], imuFrame.imu_az[4]);
-            	printf("[TICK] %lu | t1=%lu t2=%lu t3=%lu t4=%lu t5=%lu\r\n",
-            	       HAL_GetTick(),
-            	       (uint32_t)imuFrame.tick[0], (uint32_t)imuFrame.tick[1],
-            	       (uint32_t)imuFrame.tick[2], (uint32_t)imuFrame.tick[3],
-            	       (uint32_t)imuFrame.tick[4]);
-                store_current_imu_frame(imu_buffer, frame_count);
-            }
-            xSemaphoreGive(imuSyncSem);
-            // 🔒 보호구역 끝
-
-            if (sensingEnabled)
-                frame_count++;
-
-            if (frame_count >= MAX_FRAMES) {
-                sensingEnabled = false;
-                recording_done = true;
-                HAL_TIM_Base_Stop_IT(&htim6);
-                printf("■ Buffer full (%d frames)\r\n", frame_count);
-            }
-        }
-
-        // 버튼으로 중단 시 즉시 정지
-        if (!sensingEnabled && frame_count > 0) {
-            recording_done = true;
-            HAL_TIM_Base_Stop_IT(&htim6);
-            printf("■ Recording manually stopped (%d frames)\r\n", frame_count);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
+
 void IMU_MODEL(void *pvParameters)
 {
     for (;;)
     {
-        if (recording_done)
-        {
-            printf("🤖 [AI_MODEL] Processing inference (LinearResample→Zscore, L=%d)\r\n", TCN_L);
+        // ▶ Store가 xTaskNotifyGive(hModelTask) 호출할 때까지 블록
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-            // 1) RAW 스냅샷 복사 (LSB 원값 그대로, float32)
-            xSemaphoreTake(imuSyncSem, portMAX_DELAY);
-            uint16_t len = frame_count;
-            if (len > MAX_FRAMES) len = MAX_FRAMES;
+        printf("🤖 [AI_MODEL] Processing inference (LinearResample→Zscore, L=%d)\r\n", TCN_L);
 
-            for (uint16_t i = 0; i < len; ++i)
-                for (int c = 0; c < FRAME_CHANNELS; ++c)
-                    tmp_raw[i][c] = (float)imu_buffer[i][c];
-            xSemaphoreGive(imuSyncSem);
+        // 1) RAW 스냅샷 복사
+        xSemaphoreTake(imuSyncSem, portMAX_DELAY);
+        uint16_t len = frame_count;
+        if (len > MAX_FRAMES) len = MAX_FRAMES;
+        for (uint16_t i = 0; i < len; ++i)
+            for (int c = 0; c < FRAME_CHANNELS; ++c)
+                tmp_raw[i][c] = (float)imu_buffer[i][c];
+        xSemaphoreGive(imuSyncSem);
 
-            // 2) ★ 파이썬과 동일 전처리 ★
-            // 2-1) 선형보간 리샘플: [len,30] → [128,30]
-            linear_resample_LC(&tmp_raw[0][0], (int)len, FRAME_CHANNELS,
-                               &ai_input_buffer[0][0], TCN_L);
+        // 2) 전처리 (리샘플 → z-score)
+        linear_resample_LC(&tmp_raw[0][0], (int)len, FRAME_CHANNELS,
+                           &ai_input_buffer[0][0], TCN_L);
 
-            diag_prenorm_range(&ai_input_buffer[0][0], TCN_L, TCN_C, /*var_thr=*/1e-3f);
-            diag_zbias_top5(&ai_input_buffer[0][0], TCN_L, TCN_C);
-            diag_imu_activity(&ai_input_buffer[0][0], TCN_L, TCN_C);
-            // 2-2) 채널별 z-score 정규화: (x-μ)/σ, μ/σ는 JSON에서 생성된 값이 C에 내장됨
-            tcn_normalize_inplace(&ai_input_buffer[0][0], TCN_L, TCN_C);
+        diag_prenorm_range(&ai_input_buffer[0][0], TCN_L, TCN_C, 1e-3f);
+        diag_zbias_top5(&ai_input_buffer[0][0], TCN_L, TCN_C);
+        diag_imu_activity(&ai_input_buffer[0][0], TCN_L, TCN_C);
 
-            print_ch_stats(&ai_input_buffer[0][0], TCN_L, TCN_C);
-            // (선택) 디버그: 합/제곱합으로 동등성 점검
-            /*
-            double s=0, q=0;
-            for (int i=0;i<TCN_L;i++)
-              for (int c=0;c<TCN_C;c++){
-                float v = ai_input_buffer[i][c];
-                s += v; q += (double)v*v;
-              }
-            printf("[DBG] sum=%.6f, sqsum=%.6f\r\n", s, q);
-            */
-            debug_tensor_fp32(&ai_input_buffer[0][0], TCN_L * TCN_C);
+        tcn_normalize_inplace(&ai_input_buffer[0][0], TCN_L, TCN_C);
+        print_ch_stats(&ai_input_buffer[0][0], TCN_L, TCN_C);
+        debug_tensor_fp32(&ai_input_buffer[0][0], TCN_L * TCN_C);
 
-            // 3) 추론 실행
-            dcache_clean(ai_input_buffer, sizeof(ai_input_buffer));
-            AI_Run(&ai_input_buffer[0][0], &ai_output_buffer[0]);
+        // 3) 추론
+        dcache_clean(ai_input_buffer, sizeof(ai_input_buffer));
+        AI_Run(&ai_input_buffer[0][0], &ai_output_buffer[0]);
 
-            float sum = 0.f;
-            for (int i = 0; i < NCLS; ++i) sum += ai_output_buffer[i];
+        float sum = 0.f;
+        for (int i = 0; i < NCLS; ++i) sum += ai_output_buffer[i];
+        printf("sum=%.6f\r\n", sum);
 
-            printf("sum=%.6f\r\n", sum);  // ≈ 1.0 이면 정상
+        int best = 0; float bv = ai_output_buffer[0];
+        for (int k = 1; k < NCLS; ++k)
+            if (ai_output_buffer[k] > bv) { best = k; bv = ai_output_buffer[k]; }
+        printf("[Y] p0=%.6f p1=%.6f p2=%.6f | pred=%d (%.2f%%)\r\n",
+               ai_output_buffer[0], ai_output_buffer[1], ai_output_buffer[2],
+               best, bv*100.0f);
 
-            // 4) 결과
-            int best = 0; float bv = ai_output_buffer[0];
-            for (int k = 1; k < NCLS; ++k)
-                if (ai_output_buffer[k] > bv) { best = k; bv = ai_output_buffer[k]; }
-            printf("[Y] p0=%.6f p1=%.6f p2=%.6f | pred=%d (%.2f%%)\r\n",
-                   ai_output_buffer[0], ai_output_buffer[1], ai_output_buffer[2],
-                   best, bv*100.0f);
-
-            // 5) 상태 초기화
-            frame_count    = 0;
-            recording_done = false;
-            sensingEnabled = false;
-            printf("[AI_MODEL] Done.\r\n\n");
-        }
-        vTaskDelay(pdMS_TO_TICKS(50));
+        // 4) 상태 초기화 (임계구역에서)
+        xSemaphoreTake(imuSyncSem, portMAX_DELAY);
+        frame_count    = 0;
+        recording_done = false;
+        sensingEnabled = false;
+        xSemaphoreGive(imuSyncSem);
+        modelBusy = 0;   // ✅ 다음 라운드 허용
+        printf("[AI_MODEL] Done.\r\n\n");
+        // ▶ 다음 완료 신호까지 자동 대기 (딜레이 필요 없음)
     }
 }
 
 
 
+void print_imu(void *pvParameters)
+{
+    for(;;)
+    {
+        if (sensingEnabled)
+        {
+            int16_t ax,ay,az,gx,gy,gz;
+
+            if (mpu_read_6axes(&hspi1, GPIOD, GPIO_PIN_0, &ax,&ay,&az,&gx,&gy,&gz) == HAL_OK)
+                printf("IMU1 [%6d %6d %6d | %6d %6d %6d]\r\n", ax,ay,az, gx,gy,gz);
+
+            if (mpu_read_6axes(&hspi1, GPIOD, GPIO_PIN_1, &ax,&ay,&az,&gx,&gy,&gz) == HAL_OK)
+                printf("IMU2 [%6d %6d %6d | %6d %6d %6d]\r\n", ax,ay,az, gx,gy,gz);
+
+            if (mpu_read_6axes(&hspi2, GPIOD, GPIO_PIN_2, &ax,&ay,&az,&gx,&gy,&gz) == HAL_OK)
+                printf("IMU3 [%6d %6d %6d | %6d %6d %6d]\r\n", ax,ay,az, gx,gy,gz);
+
+            if (mpu_read_6axes(&hspi2, GPIOD, GPIO_PIN_3, &ax,&ay,&az,&gx,&gy,&gz) == HAL_OK)
+                printf("IMU4 [%6d %6d %6d | %6d %6d %6d]\r\n", ax,ay,az, gx,gy,gz);
+
+            if (mpu_read_6axes(&hspi3, GPIOD, GPIO_PIN_4, &ax,&ay,&az,&gx,&gy,&gz) == HAL_OK)
+                printf("IMU5 [%6d %6d %6d | %6d %6d %6d]\r\n", ax,ay,az, gx,gy,gz);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500)); // 10Hz로 가볍게
+    }
+}
 
 void vApplicationMallocFailedHook(void)
 {
@@ -1315,8 +1506,6 @@ Error_Handler();
   imuSyncSem = xSemaphoreCreateMutex();
   configASSERT(imuSyncSem != NULL);
 
-  imuEvt = xEventGroupCreate();
-  configASSERT(imuEvt != NULL);
 
   // 실패 시 바로 알게 하기 (간단버전)
   #define CREATE_TASK(fn, name, stack, prio)                                  \
@@ -1331,15 +1520,22 @@ Error_Handler();
     } while (0)
 
   // ---- 여기부터 네 코드 교체 ----
-  xTaskCreate(Read_imu1,"Read_imu1",768,NULL,2,NULL);
-  xTaskCreate(Read_imu2,"Read_imu2",768,NULL,2,NULL);
-  xTaskCreate(Read_imu3,"Read_imu3",768,NULL,2,NULL);
-  xTaskCreate(imu_store,"imu_store",768, NULL,1, NULL);
+  // ✅ 1. 모델 태스크 먼저 생성
+  xTaskCreate(IMU_MODEL, "IMU_MODEL", 1536, NULL, 20, &hModelTask);
 
-  /* IMU_MODEL은 printf 많음 → 1536 words(=6KB)면 보통 충분 */
-  CREATE_TASK(IMU_MODEL,  "IMU_MODEL",  1536, 2);
+  // ✅ 2. 그 다음에 Store 및 Read 태스크 생성
+  xTaskCreate(imu_store, "imu_store", 512, NULL, 20, &hStoreTask);
+  xTaskCreate(Read_imu1, "Read_imu1", 768, NULL, 30, NULL);
+  xTaskCreate(Read_imu2, "Read_imu2", 768, NULL, 30, NULL);
+  xTaskCreate(Read_imu3, "Read_imu3", 768, NULL, 30, NULL);
+ // xTaskCreate(print_imu, "print_imu", 768, NULL, 32, NULL);
+
   imu_config_setting();
-
+	printf("IMU1_WHOAMI=0x%02X\r\n", read_whoami(&hspi1, GPIOD, GPIO_PIN_0));
+	printf("IMU2_WHOAMI=0x%02X\r\n", read_whoami(&hspi1, GPIOD, GPIO_PIN_1));
+	printf("IMU3_WHOAMI=0x%02X\r\n", read_whoami(&hspi2, GPIOD, GPIO_PIN_2));
+	printf("IMU4_WHOAMI=0x%02X\r\n", read_whoami(&hspi2, GPIOD, GPIO_PIN_3));
+	printf("IMU5_WHOAMI=0x%02X\r\n", read_whoami(&hspi3, GPIOD, GPIO_PIN_4));
   AI_Create();
   AI_Init();
 
@@ -1398,10 +1594,8 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
-  RCC_OscInitStruct.HSIState = RCC_HSI_DIV1;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 4;
@@ -1434,8 +1628,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  HAL_RCC_MCOConfig(RCC_MCO1, RCC_MCO1SOURCE_HSI, RCC_MCODIV_1);
-  HAL_RCC_MCOConfig(RCC_MCO2, RCC_MCO2SOURCE_SYSCLK, RCC_MCODIV_1);
 }
 
 /* USER CODE BEGIN 4 */
