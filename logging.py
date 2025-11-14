@@ -16,7 +16,7 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 SAVE_PATH = os.path.join(SAVE_DIR, f"IMU_LOG_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
 
 # ====== 고정 칼럼 정의 ======
-COLS = ["Timestep"]
+COLS = ["Timestep"] 
 for k in range(1, 6):
     COLS += [f"IMU{k}_tick", f"IMU{k}_ax", f"IMU{k}_ay", f"IMU{k}_az",
              f"IMU{k}_gx", f"IMU{k}_gy", f"IMU{k}_gz"]
