@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    imu_model_data.c
   * @author  AST Embedded Analytics Research Platform
-  * @date    2025-11-15T18:20:43+0900
+  * @date    2025-11-15T23:03:38+0900
   * @brief   AI Tool Automatic Code Generator for Embedded NN computing
   ******************************************************************************
   * @attention
@@ -21,13 +21,13 @@
 AI_API_DECLARE_BEGIN
 ai_buffer g_imu_model_data_map_activations[AI_IMU_MODEL_DATA_ACTIVATIONS_COUNT] = {
   AI_BUFFER_INIT(AI_FLAG_NONE,  AI_BUFFER_FORMAT_U8,
-    AI_BUFFER_SHAPE_INIT(AI_SHAPE_BCWH, 4, 1, 51072, 1, 1),
-    51072, NULL, NULL),    /* heap_overlay_pool */
+    AI_BUFFER_SHAPE_INIT(AI_SHAPE_BCWH, 4, 1, 49728, 1, 1),
+    49728, NULL, NULL),    /* heap_overlay_pool */
   };
 ai_buffer g_imu_model_data_map_weights[AI_IMU_MODEL_DATA_WEIGHTS_COUNT] = {
   AI_BUFFER_INIT(AI_FLAG_NONE,  AI_BUFFER_FORMAT_U8,
-    AI_BUFFER_SHAPE_INIT(AI_SHAPE_BCWH, 4, 1, 336404, 1, 1),
-    336404, NULL, s_imu_model_weights_array_u64),   /* weights_array */
+    AI_BUFFER_SHAPE_INIT(AI_SHAPE_BCWH, 4, 1, 119252, 1, 1),
+    119252, NULL, s_imu_model_weights_array_u64),   /* weights_array */
   };
 
 

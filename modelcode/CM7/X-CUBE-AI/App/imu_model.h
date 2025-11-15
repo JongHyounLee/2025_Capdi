@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    imu_model.h
   * @author  AST Embedded Analytics Research Platform
-  * @date    2025-11-15T18:20:43+0900
+  * @date    2025-11-15T23:03:38+0900
   * @brief   AI Tool Automatic Code Generator for Embedded NN computing
   ******************************************************************************
   * @attention
@@ -23,7 +23,7 @@
 
 /******************************************************************************/
 #define AI_IMU_MODEL_MODEL_NAME          "imu_model"
-#define AI_IMU_MODEL_ORIGIN_MODEL_NAME   "final_export_cubeai_60ch"
+#define AI_IMU_MODEL_ORIGIN_MODEL_NAME   "final_export_cubeai_60ch_best_2"
 
 /******************************************************************************/
 #define AI_IMU_MODEL_ACTIVATIONS_ALIGNMENT   (4)
@@ -68,7 +68,7 @@ AI_DEPRECATED
 #define AI_IMU_MODEL_OUT_1_SIZE_BYTES  (20)
 
 /******************************************************************************/
-#define AI_IMU_MODEL_N_NODES (20)
+#define AI_IMU_MODEL_N_NODES (14)
 
 
 AI_API_DECLARE_BEGIN
