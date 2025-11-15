@@ -1,6 +1,6 @@
 Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.o: \
- C:/github/2025_Capdi/2025_Capdi/modelcode/Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.c \
- C:/github/2025_Capdi/2025_Capdi/modelcode/Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.h \
+ C://github/2025_Capdi/2025_Capdi/modelcode/Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.c \
+ C://github/2025_Capdi/2025_Capdi/modelcode/Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.h \
  ../Core/Inc/stm32h7xx_nucleo_conf.h \
  ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h \
  ../Core/Inc/stm32h7xx_hal_conf.h \
@@ -36,8 +36,8 @@ Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.o: \
  ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_tim_ex.h \
  ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_uart.h \
  ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_uart_ex.h \
- C:/github/2025_Capdi/2025_Capdi/modelcode/Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo_errno.h
-C:/github/2025_Capdi/2025_Capdi/modelcode/Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.h:
+ C://github/2025_Capdi/2025_Capdi/modelcode/Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo_errno.h
+C://github/2025_Capdi/2025_Capdi/modelcode/Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo.h:
 ../Core/Inc/stm32h7xx_nucleo_conf.h:
 ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h:
 ../Core/Inc/stm32h7xx_hal_conf.h:
@@ -73,4 +73,4 @@ C:/github/2025_Capdi/2025_Capdi/modelcode/Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx
 ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_tim_ex.h:
 ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_uart.h:
 ../../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_uart_ex.h:
-C:/github/2025_Capdi/2025_Capdi/modelcode/Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo_errno.h:
+C://github/2025_Capdi/2025_Capdi/modelcode/Drivers/BSP/STM32H7xx_Nucleo/stm32h7xx_nucleo_errno.h:

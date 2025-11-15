@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    network.h
   * @author  AST Embedded Analytics Research Platform
-  * @date    2025-11-01T14:40:38+0900
+  * @date    2025-11-16T06:51:12+0900
   * @brief   AI Tool Automatic Code Generator for Embedded NN computing
   ******************************************************************************
   * @attention
@@ -23,7 +23,7 @@
 
 /******************************************************************************/
 #define AI_NETWORK_MODEL_NAME          "network"
-#define AI_NETWORK_ORIGIN_MODEL_NAME   "tcn_cubeai_ready"
+#define AI_NETWORK_ORIGIN_MODEL_NAME   "tcn_move_best_base_4"
 
 /******************************************************************************/
 #define AI_NETWORK_ACTIVATIONS_ALIGNMENT   (4)
@@ -45,9 +45,9 @@ AI_DEPRECATED
 }
 #define AI_NETWORK_IN_1_FORMAT      (AI_BUFFER_FORMAT_FLOAT)
 #define AI_NETWORK_IN_1_HEIGHT      (128)
-#define AI_NETWORK_IN_1_CHANNEL     (8)
-#define AI_NETWORK_IN_1_SIZE        (1024)
-#define AI_NETWORK_IN_1_SIZE_BYTES  (4096)
+#define AI_NETWORK_IN_1_CHANNEL     (30)
+#define AI_NETWORK_IN_1_SIZE        (3840)
+#define AI_NETWORK_IN_1_SIZE_BYTES  (15360)
 
 /******************************************************************************/
 #define AI_NETWORK_OUT_NUM       (1)
@@ -63,12 +63,12 @@ AI_DEPRECATED
   AI_NETWORK_OUT_1_SIZE_BYTES, \
 }
 #define AI_NETWORK_OUT_1_FORMAT      (AI_BUFFER_FORMAT_FLOAT)
-#define AI_NETWORK_OUT_1_CHANNEL     (2)
-#define AI_NETWORK_OUT_1_SIZE        (2)
-#define AI_NETWORK_OUT_1_SIZE_BYTES  (8)
+#define AI_NETWORK_OUT_1_CHANNEL     (4)
+#define AI_NETWORK_OUT_1_SIZE        (4)
+#define AI_NETWORK_OUT_1_SIZE_BYTES  (16)
 
 /******************************************************************************/
-#define AI_NETWORK_N_NODES (31)
+#define AI_NETWORK_N_NODES (41)
 
 
 AI_API_DECLARE_BEGIN

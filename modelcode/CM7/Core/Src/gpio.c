@@ -34,34 +34,7 @@ extern volatile bool recording_done;
 /* USER CODE BEGIN 1 */
 // main.c 또는 gpio.c 안에 작성
 
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
-    static uint32_t lastTick = 0;
-    uint32_t now = HAL_GetTick();
 
-    if (GPIO_Pin == GPIO_PIN_0)
-    {
-        if (now - lastTick < 250)
-            return;
-        lastTick = now;
-
-        sensingEnabled = !sensingEnabled;
-
-        if (sensingEnabled)
-        {
-            frame_count = 0;     // 새 동작 수집 시작
-            printf("▶ Recording start\r\n");
-            __HAL_TIM_SET_COUNTER(&htim6, 0);
-            HAL_TIM_Base_Start_IT(&htim6);
-        }
-        else
-        {
-            recording_done = true;  // 버튼으로 강제 종료
-            HAL_TIM_Base_Stop_IT(&htim6);
-            printf("■ Recording stop (%d frames)\r\n", frame_count);
-        }
-    }
-}
 
 /* USER CODE END 1 */
 

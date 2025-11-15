@@ -1,6 +1,6 @@
 Middlewares/Third_Party/FreeRTOS/cmsis_os.o: \
- C:/github/2025_Capdi/2025_Capdi/modelcode/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/cmsis_os.c \
- C:/github/2025_Capdi/2025_Capdi/modelcode/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/cmsis_os.h \
+ C://github/2025_Capdi/2025_Capdi/modelcode/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/cmsis_os.c \
+ C://github/2025_Capdi/2025_Capdi/modelcode/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/cmsis_os.h \
  ../../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h \
  ../Core/Inc/FreeRTOSConfig.h \
  ../../Middlewares/Third_Party/FreeRTOS/Source/include/projdefs.h \
@@ -18,7 +18,7 @@ Middlewares/Third_Party/FreeRTOS/cmsis_os.o: \
  ../../Middlewares/Third_Party/FreeRTOS/Source/include/event_groups.h \
  ../../Middlewares/Third_Party/FreeRTOS/Source/include/timers.h \
  ../../Drivers/CMSIS/Include/cmsis_gcc.h
-C:/github/2025_Capdi/2025_Capdi/modelcode/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/cmsis_os.h:
+C://github/2025_Capdi/2025_Capdi/modelcode/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS/cmsis_os.h:
 ../../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h:
 ../Core/Inc/FreeRTOSConfig.h:
 ../../Middlewares/Third_Party/FreeRTOS/Source/include/projdefs.h:
