@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    imu_model_data.h
   * @author  AST Embedded Analytics Research Platform
-  * @date    2025-11-11T22:04:50+0900
+  * @date    2025-11-15T18:20:43+0900
   * @brief   AI Tool Automatic Code Generator for Embedded NN computing
   ******************************************************************************
   * Copyright (c) 2025 STMicroelectronics.
@@ -32,7 +32,7 @@ AI_DEPRECATED
 AI_API_DECLARE_BEGIN
 
 
-extern const ai_u64 s_imu_model_weights_array_u64[7618];
+extern const ai_u64 s_imu_model_weights_array_u64[42051];
 
 
 

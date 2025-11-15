@@ -412,15 +412,15 @@
       "mpool_id": 1,
       "name": "dense_dense_bias_array",
       "nbits": 32,
-      "offset_start": 60928,
+      "offset_start": 61184,
       "qmn": {},
       "shape": [
-        3
+        5
       ],
       "shape_map": [
         "CH"
       ],
-      "size_bytes": 12
+      "size_bytes": 20
     },
     {
       "alignment": 4,
@@ -442,12 +442,12 @@
       "offset_start": 0,
       "qmn": {},
       "shape": [
-        3
+        5
       ],
       "shape_map": [
         "CH"
       ],
-      "size_bytes": 12
+      "size_bytes": 20
     },
     {
       "alignment": 4,
@@ -469,14 +469,14 @@
       "offset_start": 60544,
       "qmn": {},
       "shape": [
-        3,
+        5,
         32
       ],
       "shape_map": [
         "CH",
         "CH_IN"
       ],
-      "size_bytes": 384
+      "size_bytes": 640
     },
     {
       "alignment": 4,
@@ -495,15 +495,15 @@
       "mpool_id": 0,
       "name": "dense_output_array",
       "nbits": 32,
-      "offset_start": 12,
+      "offset_start": 20,
       "qmn": {},
       "shape": [
-        3
+        5
       ],
       "shape_map": [
         "CH"
       ],
-      "size_bytes": 12
+      "size_bytes": 20
     },
     {
       "alignment": 4,
@@ -653,44 +653,44 @@
   ],
   "environment": {
     "generated_model": {
-      "generated_time": "2025-11-10T22:44:59+0900",
+      "generated_time": "2025-11-14T18:19:45+0900",
       "model_files": [
         {
           "name": "imu_model_data_params.h",
-          "signature": "0x33fbcfdd601e9d2fb8f304e4a4e0bf47"
+          "signature": "0xa53e742af4b8cf76513e5f9fc6e8906d"
         },
         {
           "name": "imu_model_data_params.c",
-          "signature": "0x20ed3ec48804fba45984bec74aa0a585"
+          "signature": "0x505c3714755e96343463a8d01e54ff8d"
         },
         {
           "name": "imu_model_data.h",
-          "signature": "0xfe113822efe3e63ddc1228a2a2029a41"
+          "signature": "0xf466034bd6028fa629ca619260ed8ac2"
         },
         {
           "name": "imu_model_data.c",
-          "signature": "0x97820c8d6b24a00078b83409b0b2e3e3"
+          "signature": "0x121e23173ecf77af28f8a5b7d7e26eb3"
         },
         {
           "name": "imu_model_config.h",
-          "signature": "0x60c0d78bf47c97f064507629cd322df1"
+          "signature": "0x6f553f4e1ca32f72b938e9433ebe4e3b"
         },
         {
           "name": "imu_model.h",
-          "signature": "0xeaa44f72b590686e97523c3605d5269b"
+          "signature": "0xb9d50381c9f526f690356d45ac6a85df"
         },
         {
           "name": "imu_model.c",
-          "signature": "0x66ad652047474459b217175de8789caf"
+          "signature": "0x5f07a2f8be21fd93f7f72df1ae55d03c"
         }
       ],
       "name": "imu_model"
     },
-    "network_signature": "0x1a141a1b8529dddb",
+    "network_signature": "0x1d1179e1150652a0",
     "test_name": "",
     "tools": [
       {
-        "arguments": "generate --target stm32h7 --name imu_model -m C:/Users/hjl99/Desktop/IMU_model/final_export_cubeai.h5 --compression none --verbosity 1 --workspace C:/Users/hjl99/AppData/Local/Temp/mxAI_workspace3020852567521003606862189936145393 --output C:/Users/hjl99/.stm32cubemx/imu_model_output",
+        "arguments": "generate --target stm32h7 --name imu_model -m C:/Users/hjl99/Desktop/IMU_model/final_export_cubeai.h5 --compression none --verbosity 1 --workspace C:/Users/hjl99/AppData/Local/Temp/mxAI_workspace6317832296083007740542452831363492 --output C:/Users/hjl99/.stm32cubemx/imu_model_output",
         "environment": [
           "STATS_TYPE=X-CUBE-AI"
         ],
@@ -698,12 +698,12 @@
           "model_files": [
             {
               "name": "final_export_cubeai.h5",
-              "signature": "0x96d1e32abf0fc8ac3ef8b3f697ed3852"
+              "signature": "0x61938b3c40bdbc9b12110d17979eaf41"
             }
           ],
-          "n_params": 15331,
+          "n_params": 15397,
           "name": "final_export_cubeai",
-          "size": 61324,
+          "size": 61588,
           "type": "keras"
         },
         "name": "ST.EdgeAI.Core",
@@ -1104,7 +1104,7 @@
         },
         {
           "attributes": {
-            "num_units": "3",
+            "num_units": "5",
             "use_bias": "True"
           },
           "description": "Dense",
@@ -1114,7 +1114,7 @@
             172,
             175
           ],
-          "macc": 99,
+          "macc": 165,
           "mapping": "NODE_SW",
           "name": "dense_dense",
           "original_nodes": [
@@ -1140,7 +1140,7 @@
           "inputs": [
             150
           ],
-          "macc": 45,
+          "macc": 75,
           "mapping": "NODE_SW",
           "name": "dense",
           "original_nodes": [
@@ -1192,7 +1192,7 @@
           "name": "dense",
           "shape": [
             1,
-            3
+            5
           ],
           "shape_map": [
             "BATCH",
@@ -1218,7 +1218,7 @@
     "toolchain": "arm-none-eabi-gcc (GNU Tools for STM32 13.3.rel1.20240926-1715) 13.3.1 20240614",
     "toolchain_flash": 646,
     "toolchain_ram": 0,
-    "weights": 60940
+    "weights": 61204
   },
   "memory_pools": [
     {
@@ -1281,7 +1281,7 @@
       "rights": "ACC_READ",
       "size_bytes": -1,
       "subpools": [],
-      "used_size_bytes": 60940,
+      "used_size_bytes": 61204,
       "user_allocated": false,
       "virtual": false
     }

@@ -37,7 +37,7 @@
 volatile int uartTxDone = 1;
 volatile bool sensingEnabled = false;  // 전역 변수
 volatile uint8_t action=0;
-volatile uint8_t label=0;
+volatile uint8_t label=1;
 SemaphoreHandle_t uartMtx;          // UART 보호용 뮤텍스
 SemaphoreHandle_t uartTxDoneSem;    // DMA 완료 신호용 바이너리 세마포어
 #define UART_BUF_SIZE 1024   // 5개 IMU 데이터 한 줄 충분
@@ -406,16 +406,16 @@ static inline HAL_StatusTypeDef uart1_dma_printf(const uint8_t *data, uint16_t l
 void imu_config_setting(void)
 {
     // ── 공통 레지스터 값 ─────────────────────────────────────────────────────
-    uint8_t smplrtDiv[2]   = {0x19, 19};   // 1000/(1+19)=50 Hz
-    uint8_t gyroCfg[2]     = {0x1B, 0x18}; // ±2000 dps
-    uint8_t accelCfg[2]    = {0x1C, 0x10}; // ±8 g
-    uint8_t accelDlpf[2]   = {0x1D, 0x03}; // ACCEL DLPF=3(≈45 Hz)
+	uint8_t smplrtDiv[2] = {0x19, 19};   // 50 Hz 유지
+	uint8_t gyroCfg[2]   = {0x1B, 0x08}; // ±500 dps
+	uint8_t accelCfg[2]  = {0x1C, 0x08}; // ±4 g (가능하면)
+	uint8_t accelDlpf[2] = {0x1D, 0x06}; // ACCEL DLPF=6 (~5 Hz)
+	uint8_t configData[2]= {0x1A, 0x06}; // GYRO  DLPF=6 (~5 Hz)
 
-    uint8_t resetData[2]   = {0x6B, 0x80}; // PWR_MGMT_1: reset
-    uint8_t wakeData[2]    = {0x6B, 0x01}; // PWR_MGMT_1: CLK=PLL, sleep off
-    uint8_t disableI2C[2]  = {0x6A, 0x10}; // USER_CTRL : I2C_IF_DIS=1
-    uint8_t configData[2]  = {0x1A, 0x03}; // CONFIG    : GYRO DLPF=3
-    uint8_t pwr2Data[2]    = {0x6C, 0x00}; // PWR_MGMT_2: 모든 축 활성화
+	uint8_t resetData[2]  = {0x6B, 0x80};
+	uint8_t wakeData[2]   = {0x6B, 0x01};
+	uint8_t disableI2C[2] = {0x6A, 0x10};
+	uint8_t pwr2Data[2]   = {0x6C, 0x00};
 
     // ---------------- IMU1 (SPI1, PD0) ----------------
     HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_RESET);
