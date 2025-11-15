@@ -38,34 +38,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := modelcode_CM7
+BUILD_ARTIFACT_NAME := pro_CM7
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-modelcode_CM7.elf \
+pro_CM7.elf \
 
 MAP_FILES += \
-modelcode_CM7.map \
+pro_CM7.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-modelcode_CM7.list \
+pro_CM7.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: modelcode_CM7.elf secondary-outputs
+main-build: pro_CM7.elf secondary-outputs
 
 # Tool invocations
-modelcode_CM7.elf modelcode_CM7.map: $(OBJS) $(USER_OBJS) C:\Users\hjl99\STM32CubeIDE\workspace_1.19.0\modelcode\CM7\STM32H755ZITX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "modelcode_CM7.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m7 -T"C:\Users\hjl99\STM32CubeIDE\workspace_1.19.0\modelcode\CM7\STM32H755ZITX_FLASH.ld" --specs=nosys.specs -Wl,-Map="modelcode_CM7.map" -Wl,--gc-sections -static -L../../Middlewares/ST/AI/Lib -u _printf_float --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+pro_CM7.elf pro_CM7.map: $(OBJS) $(USER_OBJS) C:\github\2025_Capdi\2025_Capdi\modelcode\CM7\STM32H755ZITX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "pro_CM7.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m7 -T"C:\github\2025_Capdi\2025_Capdi\modelcode\CM7\STM32H755ZITX_FLASH.ld" --specs=nosys.specs -Wl,-Map="pro_CM7.map" -Wl,--gc-sections -static -L../../Middlewares/ST/AI/Lib -u _printf_float --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -74,14 +74,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-modelcode_CM7.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "modelcode_CM7.list"
+pro_CM7.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "pro_CM7.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) default.size.stdout modelcode_CM7.elf modelcode_CM7.list modelcode_CM7.map
+	-$(RM) default.size.stdout pro_CM7.elf pro_CM7.list pro_CM7.map
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)

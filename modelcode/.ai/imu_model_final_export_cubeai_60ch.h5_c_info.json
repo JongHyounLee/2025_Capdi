@@ -1182,45 +1182,46 @@
     }
   ],
   "environment": {
+    "device": "AMD64, Intel64 Family 6 Model 158 Stepping 10, GenuineIntel, Windows",
     "generated_model": {
-      "generated_time": "2025-11-15T20:53:30+0900",
+      "generated_time": "2025-11-16T00:42:45+0900",
       "model_files": [
         {
           "name": "imu_model_data_params.h",
-          "signature": "0xdd5a05c96bd538cb841853b0974c9d56"
+          "signature": "0xfc76f0d852c5d285e296d12be91406fe"
         },
         {
           "name": "imu_model_data_params.c",
-          "signature": "0xa092fa56a204ceaee90a715159e1f70a"
+          "signature": "0xd86f7441c2daac6757805f2e7434b330"
         },
         {
           "name": "imu_model_data.h",
-          "signature": "0x8ed1c5a8a6a61e357fb726e9c607a36d"
+          "signature": "0x7336950bff96151f94201647b29bed38"
         },
         {
           "name": "imu_model_data.c",
-          "signature": "0x8901c48f529bf708dc39029809e48c3e"
+          "signature": "0x668b708388669014812ba85f7cabe35b"
         },
         {
           "name": "imu_model_config.h",
-          "signature": "0x674637f82a37684e21b2d868cc453a44"
+          "signature": "0x0ee3e6fc2c2c45ebc96455f699d66634"
         },
         {
           "name": "imu_model.h",
-          "signature": "0x34f589bf76026b78fe2658efe28d7aa0"
+          "signature": "0x3d6e4a6ff8e3e2b0a1aa918287fb69fa"
         },
         {
           "name": "imu_model.c",
-          "signature": "0x9cb97bd5ace1dcb82cb858b9e02f1cf0"
+          "signature": "0xb96b9d4d9dd82eece7e95a28da33508d"
         }
       ],
       "name": "imu_model"
     },
-    "network_signature": "0x51436ab81bf89295",
+    "network_signature": "0xf438000b66d25084",
     "test_name": "",
     "tools": [
       {
-        "arguments": "analyze --target stm32h7 --name imu_model -m C:/Users/hjl99/Desktop/IMU_model/final_export_cubeai_60ch.h5 --compression low --verbosity 1 --workspace C:/Users/hjl99/AppData/Local/Temp/mxAI_workspace7274104821109005711692940978083223 --output C:/Users/hjl99/.stm32cubemx/imu_model_output",
+        "arguments": "validate --target stm32h7 --name imu_model -m C:/MODEL/11_16_JONGHYON/final_export_cubeai_60ch.h5 --compression none --verbosity 1 --workspace C:/Temp/mxAI_workspace13655126467830011328462917912120467 --output C:/stm32/report --classifier",
         "environment": [
           "STATS_TYPE=X-CUBE-AI"
         ],
@@ -1553,6 +1554,13 @@
           }
         }
       ],
+      "exec_time": {
+        "counters": null,
+        "cycles": 0,
+        "cycles_by_macc": 0.0,
+        "duration_ms": 17.191375763490214,
+        "percentage": 100.0
+      },
       "id": 0,
       "inputs": [
         255
@@ -1575,6 +1583,13 @@
             "weights_prefetch": "True"
           },
           "description": "Conv2D",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 3.4290001690387726,
+            "percentage": 19.946048624689087
+          },
           "id": 20,
           "inputs": [
             255,
@@ -1603,6 +1618,13 @@
             "nonlinearity": "relu"
           },
           "description": "Nonlinearity",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.003000000084284693,
+            "percentage": 0.017450610850214057
+          },
           "id": 21,
           "inputs": [
             257
@@ -1638,6 +1660,13 @@
             "weights_prefetch": "True"
           },
           "description": "Conv2D",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 2.781750112771988,
+            "percentage": 16.181079112235246
+          },
           "id": 22,
           "inputs": [
             259,
@@ -1666,6 +1695,13 @@
             "nonlinearity": "relu"
           },
           "description": "Nonlinearity",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.003500000078929588,
+            "percentage": 0.020359045879054266
+          },
           "id": 23,
           "inputs": [
             261
@@ -1701,6 +1737,13 @@
             "weights_prefetch": "True"
           },
           "description": "Conv2D",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 2.716250091791153,
+            "percentage": 15.800073997333747
+          },
           "id": 24,
           "inputs": [
             263,
@@ -1729,6 +1772,13 @@
             "operation": "add"
           },
           "description": "Eltwise",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.0035000001080334187,
+            "percentage": 0.020359046048347467
+          },
           "id": 25,
           "inputs": [
             259,
@@ -1754,6 +1804,13 @@
             "nonlinearity": "relu"
           },
           "description": "Nonlinearity",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.002375000069150701,
+            "percentage": 0.013815066937193895
+          },
           "id": 26,
           "inputs": [
             267
@@ -1788,6 +1845,13 @@
             "use_bias": "True"
           },
           "description": "Conv2D",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 2.077750116586685,
+            "percentage": 12.086002569958705
+          },
           "id": 27,
           "inputs": [
             269,
@@ -1814,6 +1878,13 @@
             "nonlinearity": "relu"
           },
           "description": "Nonlinearity",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.0025000000605359674,
+            "percentage": 0.014542175652080647
+          },
           "id": 28,
           "inputs": [
             271
@@ -1848,6 +1919,13 @@
             "use_bias": "True"
           },
           "description": "Conv2D",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 2.065875083208084,
+            "percentage": 12.016927043124952
+          },
           "id": 29,
           "inputs": [
             273,
@@ -1874,6 +1952,13 @@
             "operation": "add"
           },
           "description": "Eltwise",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.002875000092899427,
+            "percentage": 0.016723502135327306
+          },
           "id": 30,
           "inputs": [
             269,
@@ -1899,6 +1984,13 @@
             "nonlinearity": "relu"
           },
           "description": "Nonlinearity",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.0027500000433064997,
+            "percentage": 0.01599639308185415
+          },
           "id": 31,
           "inputs": [
             277
@@ -1933,6 +2025,13 @@
             "use_bias": "True"
           },
           "description": "Conv2D",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 2.0370001196861267,
+            "percentage": 11.848965130598556
+          },
           "id": 32,
           "inputs": [
             279,
@@ -1959,6 +2058,13 @@
             "nonlinearity": "relu"
           },
           "description": "Nonlinearity",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.002250000077765435,
+            "percentage": 0.013087958222307143
+          },
           "id": 33,
           "inputs": [
             281
@@ -1993,6 +2099,13 @@
             "use_bias": "True"
           },
           "description": "Conv2D",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 2.049000069499016,
+            "percentage": 11.918767280106414
+          },
           "id": 34,
           "inputs": [
             283,
@@ -2019,6 +2132,13 @@
             "operation": "add"
           },
           "description": "Eltwise",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.003375000087544322,
+            "percentage": 0.019631937164167515
+          },
           "id": 35,
           "inputs": [
             279,
@@ -2044,6 +2164,13 @@
             "nonlinearity": "relu"
           },
           "description": "Nonlinearity",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.003250000037951395,
+            "percentage": 0.01890482811069436
+          },
           "id": 36,
           "inputs": [
             287
@@ -2071,6 +2198,13 @@
             "pool_stride": "(128,)"
           },
           "description": "Pool",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.0030000000551808625,
+            "percentage": 0.017450610680920856
+          },
           "id": 37,
           "inputs": [
             289
@@ -2096,6 +2230,13 @@
             "use_bias": "True"
           },
           "description": "Dense",
+          "exec_time": {
+            "counters": [],
+            "cycles": 0,
+            "cycles_by_macc": 0.0,
+            "duration_ms": 0.0013750000653089955,
+            "percentage": 0.007998196794866878
+          },
           "id": 38,
           "inputs": [
             291,
@@ -2124,6 +2265,7 @@
             "orig_axis": "-1"
           },
           "description": "Nonlinearity",
+          "exec_time": {},
           "id": 39,
           "inputs": [
             293
@@ -2200,12 +2342,12 @@
       0,
       0
     ],
-    "kernel_flash": 19974,
-    "kernel_ram": 5880,
-    "series": "stm32h7",
-    "toolchain": "arm-none-eabi-gcc (GNU Tools for STM32 13.3.rel1.20240926-1715) 13.3.1 20240614",
-    "toolchain_flash": 646,
-    "toolchain_ram": 0,
+    "kernel_flash": null,
+    "kernel_ram": null,
+    "series": "generic",
+    "toolchain": null,
+    "toolchain_flash": null,
+    "toolchain_ram": null,
     "weights": 336404
   },
   "memory_pools": [
@@ -2255,7 +2397,7 @@
       "virtual": false
     },
     {
-      "address": "s_imu_model_weights_array_u64",
+      "address": "NULL",
       "alignment": 0,
       "attributes": {
         "latency": "UNDEF",
@@ -2291,5 +2433,22 @@
       "user_allocated": false,
       "virtual": false
     }
-  ]
+  ],
+  "validation": {
+    "val_error": 2.7850427386511e-07,
+    "val_error_desc": "x-cross (l2r) #1",
+    "val_metrics": [
+      {
+        "acc": "100.00%",
+        "cos": 1.0,
+        "desc": "X-cross #1",
+        "l2r": 2.7850427386511e-07,
+        "mae": 5.2780379178329895e-08,
+        "mean": -5.380716316949474e-09,
+        "nse": 0.9999999999998802,
+        "rmse": 9.211697715727496e-08,
+        "std": 9.28933232557938e-08
+      }
+    ]
+  }
 }
