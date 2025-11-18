@@ -97,3 +97,4 @@ void     AI_Squat_GetLastOutput(float *out, uint32_t max_len);
  * @brief  네트워크 클래스 개수 반환
  */
 uint32_t AI_Squat_GetNumClasses(void);
+

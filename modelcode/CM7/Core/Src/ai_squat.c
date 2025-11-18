@@ -1,10 +1,11 @@
+
 /* ai_squat.c */
 
 #include "ai_squat.h"
 
 #include <string.h>
 #include <math.h>
-
+#include <stdio.h>
 /* ==== Colab 정규화 파라미터 ==== */
 /* Core/Src 에 있는 tcn_norm_stats_base.h (feat_mean / feat_std) */
 #include "tcn_norm_stats_base.h"
@@ -124,13 +125,26 @@ bool AI_Squat_Init(void)
 {
     ai_error err;
 
-    /* 네트워크 생성 */
+    printf("\r\n[AI_SQUAT] ==== Init start ====\r\n");
+
+    /* 우리가 기대하는 입력/출력 스펙 로그 */
+    printf("[AI_SQUAT] Expected INPUT len = %u (MOVE_LEN=%u, FEAT=%u)\r\n",
+           (unsigned)AI_SQUAT_INPUT_SIZE,
+           (unsigned)AI_SQUAT_MOVE_LEN,
+           (unsigned)AI_SQUAT_N_FEATURES);
+    printf("[AI_SQUAT] Expected N_CLASSES = %u\r\n",
+           (unsigned)AI_SQUAT_N_CLASSES);
+
+    /* 1) 네트워크 생성 */
     err = ai_network_create(&s_network, AI_NETWORK_DATA_CONFIG);
     if (err.type != AI_ERROR_NONE) {
+        printf("[AI_SQUAT] ai_network_create() FAILED (type=%d, code=%d)\r\n",
+               (int)err.type, (int)err.code);
+        s_network = AI_HANDLE_NULL;
         return false;
     }
 
-    /* weights / activations 매핑 */
+    /* 2) weights / activations 매핑 */
     const ai_network_params params = AI_NETWORK_PARAMS_INIT(
         AI_NETWORK_DATA_WEIGHTS(ai_network_data_weights_get()),
         AI_NETWORK_DATA_ACTIVATIONS(s_activations)
@@ -138,13 +152,69 @@ bool AI_Squat_Init(void)
 
     if (!ai_network_init(s_network, &params)) {
         err = ai_network_get_error(s_network);
+        printf("[AI_SQUAT] ai_network_init() FAILED (type=%d, code=%d)\r\n",
+               (int)err.type, (int)err.code);
+
         ai_network_destroy(s_network);
         s_network = AI_HANDLE_NULL;
         return false;
     }
 
+    /* 3) 네트워크 입·출력 버퍼 정보 조회 */
+    ai_u16    n_in  = 0U;
+    ai_u16    n_out = 0U;
+    ai_buffer *in   = ai_network_inputs_get(s_network, &n_in);
+    ai_buffer *out  = ai_network_outputs_get(s_network, &n_out);
+
+    if ((!in) || (!out) || (n_in < 1U) || (n_out < 1U)) {
+        printf("[AI_SQUAT] ai_network_inputs_get/outputs_get FAILED (n_in=%u, n_out=%u)\r\n",
+               (unsigned)n_in, (unsigned)n_out);
+        ai_network_destroy(s_network);
+        s_network = AI_HANDLE_NULL;
+        return false;
+    }
+
+    /* 4) 실제 네트워크 입·출력 크기 로그 */
+    printf("[AI_SQUAT] n_in=%u,  n_out=%u\r\n",
+           (unsigned)n_in, (unsigned)n_out);
+    printf("[AI_SQUAT] in[0].size  = %lu\r\n",
+           (unsigned long)in[0].size);
+    printf("[AI_SQUAT] out[0].size = %lu\r\n",
+           (unsigned long)out[0].size);
+
+    /* 5) X-CUBE-AI가 생성한 매크로 값도 같이 찍기 */
+    printf("[AI_SQUAT] AI_NETWORK_IN_1_SIZE  = %u\r\n",
+           (unsigned)AI_NETWORK_IN_1_SIZE);
+    printf("[AI_SQUAT] AI_NETWORK_OUT_1_SIZE = %u\r\n",
+           (unsigned)AI_NETWORK_OUT_1_SIZE);
+
+    /* 6) 우리가 기대하는 값과 실제 네트워크 스펙이 맞는지 체크 */
+    if (in[0].size != AI_SQUAT_INPUT_SIZE) {
+        printf("[AI_SQUAT][ERROR] INPUT size mismatch! in[0].size=%lu, expected=%u\r\n",
+               (unsigned long)in[0].size,
+               (unsigned)AI_SQUAT_INPUT_SIZE);
+        ai_network_destroy(s_network);
+        s_network = AI_HANDLE_NULL;
+        return false;
+    }
+
+    if (out[0].size != AI_SQUAT_N_CLASSES) {
+        printf("[AI_SQUAT][ERROR] OUTPUT size mismatch! out[0].size=%lu, expected N_CLASSES=%u\r\n",
+               (unsigned long)out[0].size,
+               (unsigned)AI_SQUAT_N_CLASSES);
+        ai_network_destroy(s_network);
+        s_network = AI_HANDLE_NULL;
+        return false;
+    }
+
+    printf("[AI_SQUAT] Init OK. (INPUT=%u, N_CLASSES=%u)\r\n",
+           (unsigned)AI_SQUAT_INPUT_SIZE,
+           (unsigned)AI_SQUAT_N_CLASSES);
+    printf("[AI_SQUAT] ==== Init end ====\r\n");
+
     return true;
 }
+
 
 
 void AI_Squat_MoveBegin(void)
@@ -280,36 +350,66 @@ int8_t AI_Squat_InferCurrentMove(void)
     /* 4) 추론 실행 */
     ai_i32 nbatch = ai_network_run(s_network, ai_input, ai_output);
     if (nbatch != 1) {
-        (void)ai_network_get_error(s_network);   // 필요하면 UART로 찍어도 됨
+        (void)ai_network_get_error(s_network);   // 필요하면 에러 코드 로그
         return -30;
     }
 
-    /* 5) 5-class softmax 결과에서 argmax */
+    /* 5) softmax 출력: 클래스 개수 */
+    uint32_t n_classes = AI_SQUAT_N_CLASSES;   // == AI_NETWORK_OUT_1_SIZE
+
+    /* 6) 확률 전체를 로그로 출력 (디버깅용) */
+    printf("[AI_SQUAT] probs (n=%lu):",
+           (unsigned long)n_classes);
+    for (uint32_t i = 0; i < n_classes; ++i) {
+        printf(" c%lu=%.4f",
+               (unsigned long)i, (double)s_out[i]);
+    }
+    printf("\r\n");
+
+    /* 7) argmax로 최종 클래스 index 선택 */
     float  max_v   = s_out[0];
     int8_t max_idx = 0;
 
-    for (uint32_t i = 1U; i < AI_SQUAT_N_CLASSES; ++i) {
+    for (uint32_t i = 1U; i < n_classes; ++i) {
         if (s_out[i] > max_v) {
             max_v   = s_out[i];
             max_idx = (int8_t)i;
         }
     }
 
+    printf("[AI_SQUAT] pred idx = %d (p=%.4f)\r\n",
+           (int)max_idx, (double)max_v);
+
     return max_idx;
 }
 
-
-
 uint32_t AI_Squat_GetNumClasses(void)
 {
+    /* 네트워크 출력 차원 = AI_SQUAT_N_CLASSES = AI_NETWORK_OUT_1_SIZE */
     return (uint32_t)AI_SQUAT_N_CLASSES;
 }
 
 void AI_Squat_GetLastOutput(float *out, uint32_t max_len)
 {
-    if (!out) return;
-    uint32_t n = (max_len < AI_SQUAT_N_CLASSES) ? max_len : AI_SQUAT_N_CLASSES;
+    if (!out) {
+        return;
+    }
+
+    uint32_t n = (max_len < AI_SQUAT_N_CLASSES)
+                 ? max_len
+                 : AI_SQUAT_N_CLASSES;
+
+    /* out[]에 확률 복사 */
     for (uint32_t i = 0; i < n; ++i) {
         out[i] = s_out[i];
     }
+
+    /* 필요하면 여기서도 확률 로그 (원치 않으면 이 printf 블록은 지워도 됨) */
+    printf("[AI_SQUAT] last probs (n=%lu):",
+           (unsigned long)n);
+    for (uint32_t i = 0; i < n; ++i) {
+        printf(" c%lu=%.4f",
+               (unsigned long)i, (double)s_out[i]);
+    }
+    printf("\r\n");
 }
