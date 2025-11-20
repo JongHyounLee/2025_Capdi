@@ -59,8 +59,8 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
 
 ### MCU & 보드 & 장비
 <p align="center">
-  <img src="pcb/img/NUCLEO-H755ZI-Q__front.webp" alt="Prototype hardware setup" width="300">
-  <img src="pcb/img/NUCLEO-H755ZI-Q_back.webp" alt="Prototype hardware setup" width="300">
+  <img src="PCB/img/NUCLEO-H755ZI-Q__front.webp" alt="Prototype hardware setup" width="300">
+  <img src="PCB/img/NUCLEO-H755ZI-Q_back.webp" alt="Prototype hardware setup" width="300">
 </p>
 
 - **STM32H755** (Cortex-M7 + Cortex-M4 듀얼 코어)
@@ -72,7 +72,7 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
 
 ### IMU 센서
 <p align="center">
-  <img src="pcb/img/imu-6500.jpg" alt="Prototype hardware setup" width="300">
+  <img src="PCB/img/imu-6500.jpg" alt="Prototype hardware setup" width="300">
 </p>
 
 - 종류: MPU-6500 / MPU-9250 계열 (6축: 가속도 + 자이로)
@@ -87,7 +87,7 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
   
 ### 장비
 <p align="center">
-  <img src="pcb/img/setup.jpg" alt="Prototype hardware setup" width="300">
+  <img src="PCB/img/setup.jpg" alt="Prototype hardware setup" width="300">
 </p>
 ---
 
@@ -138,7 +138,7 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
 ## 📊 H / W
 
 <p align="center">
-  <img src="pcb/img/pcb.png" alt="Prototype hardware setup" width="500">
+  <img src="PCB/img/pcb.png" alt="Prototype hardware setup" width="500">
 </p>
 
 
