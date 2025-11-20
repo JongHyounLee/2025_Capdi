@@ -6,10 +6,17 @@
 </p>
 
 <p align="center">
+  <!-- MCU / RTOS / AI / Sensors -->
   <img src="https://img.shields.io/badge/MCU-STM32H7-03234B?style=flat&logo=stmicroelectronics&logoColor=white"/>
   <img src="https://img.shields.io/badge/RTOS-FreeRTOS-1E90FF?style=flat"/>
   <img src="https://img.shields.io/badge/AI-TCN%20(Time--Series)-FF6F00?style=flat&logo=tensorflow&logoColor=white"/>
   <img src="https://img.shields.io/badge/Sensors-5x%20IMU-0A9396?style=flat"/>
+  <br/>
+  <!-- EDA / Tools -->
+  <img src="https://img.shields.io/badge/EDA-Cadence%20Capture%20CIS-E4002B?style=flat"/>
+  <img src="https://img.shields.io/badge/EDA-Allegro%20PCB%20Editor-E4002B?style=flat"/>
+  <img src="https://img.shields.io/badge/EDA-Allegro%20PCB%20Router-E4002B?style=flat"/>
+  <img src="https://img.shields.io/badge/Tool-MATLAB-0076A8?style=flat&logo=matlab&logoColor=white"/>
 </p>
 
 # 🏋️‍♀️ Multi-IMU Squat Posture Classifier  
@@ -128,6 +135,12 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
   - 스쿼트 1동작을 하나의 시퀀스로 보고,  
     **IMU 수집 ~ 전처리 ~ TCN 추론까지 전부 온디바이스로 끝내는 펌웨어**
 ---
+## 📊 H / W
+
+<p align="center">
+  <img src="img/pcb.jpg" alt="Prototype hardware setup" width="300">
+</p>
+
 
 ## 📊 데이터 & 라벨 구조
 
