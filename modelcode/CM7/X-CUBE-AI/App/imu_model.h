@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    imu_model.h
   * @author  AST Embedded Analytics Research Platform
-  * @date    2025-11-15T23:03:38+0900
+  * @date    2025-11-19T23:37:23+0900
   * @brief   AI Tool Automatic Code Generator for Embedded NN computing
   ******************************************************************************
   * @attention
@@ -23,7 +23,7 @@
 
 /******************************************************************************/
 #define AI_IMU_MODEL_MODEL_NAME          "imu_model"
-#define AI_IMU_MODEL_ORIGIN_MODEL_NAME   "final_export_cubeai_60ch_best_2"
+#define AI_IMU_MODEL_ORIGIN_MODEL_NAME   "final_export_cubeai_90ch_best"
 
 /******************************************************************************/
 #define AI_IMU_MODEL_ACTIVATIONS_ALIGNMENT   (4)
@@ -44,10 +44,10 @@ AI_DEPRECATED
   AI_IMU_MODEL_IN_1_SIZE_BYTES, \
 }
 #define AI_IMU_MODEL_IN_1_FORMAT      (AI_BUFFER_FORMAT_FLOAT)
-#define AI_IMU_MODEL_IN_1_HEIGHT      (128)
-#define AI_IMU_MODEL_IN_1_CHANNEL     (60)
-#define AI_IMU_MODEL_IN_1_SIZE        (7680)
-#define AI_IMU_MODEL_IN_1_SIZE_BYTES  (30720)
+#define AI_IMU_MODEL_IN_1_HEIGHT      (256)
+#define AI_IMU_MODEL_IN_1_CHANNEL     (90)
+#define AI_IMU_MODEL_IN_1_SIZE        (23040)
+#define AI_IMU_MODEL_IN_1_SIZE_BYTES  (92160)
 
 /******************************************************************************/
 #define AI_IMU_MODEL_OUT_NUM       (1)
@@ -68,7 +68,7 @@ AI_DEPRECATED
 #define AI_IMU_MODEL_OUT_1_SIZE_BYTES  (20)
 
 /******************************************************************************/
-#define AI_IMU_MODEL_N_NODES (14)
+#define AI_IMU_MODEL_N_NODES (20)
 
 
 AI_API_DECLARE_BEGIN

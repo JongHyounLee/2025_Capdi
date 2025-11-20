@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    imu_model_data_params.h
   * @author  AST Embedded Analytics Research Platform
-  * @date    2025-11-15T23:03:38+0900
+  * @date    2025-11-19T23:37:23+0900
   * @brief   AI Tool Automatic Code Generator for Embedded NN computing
   ******************************************************************************
   * Copyright (c) 2025 STMicroelectronics.
@@ -28,18 +28,18 @@
 
 
 #define AI_IMU_MODEL_DATA_ACTIVATIONS_SIZES \
-  { 49728, }
-#define AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE     (49728)
+  { 99456, }
+#define AI_IMU_MODEL_DATA_ACTIVATIONS_SIZE     (99456)
 #define AI_IMU_MODEL_DATA_ACTIVATIONS_COUNT    (1)
-#define AI_IMU_MODEL_DATA_ACTIVATION_1_SIZE    (49728)
+#define AI_IMU_MODEL_DATA_ACTIVATION_1_SIZE    (99456)
 
 
 
 #define AI_IMU_MODEL_DATA_WEIGHTS_SIZES \
-  { 119252, }
-#define AI_IMU_MODEL_DATA_WEIGHTS_SIZE         (119252)
+  { 220052, }
+#define AI_IMU_MODEL_DATA_WEIGHTS_SIZE         (220052)
 #define AI_IMU_MODEL_DATA_WEIGHTS_COUNT        (1)
-#define AI_IMU_MODEL_DATA_WEIGHT_1_SIZE        (119252)
+#define AI_IMU_MODEL_DATA_WEIGHT_1_SIZE        (220052)
 
 
 

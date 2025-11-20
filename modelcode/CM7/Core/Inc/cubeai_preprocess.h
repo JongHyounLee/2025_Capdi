@@ -7,8 +7,8 @@ extern "C" {
 #endif
 
 // --- TCN 입력 크기 (JSON에서 읽어옴) ---
-#define TCN_L 128
-#define TCN_C 60
+#define TCN_L 256
+#define TCN_C 90
 
 // 선형 리샘플: src [src_len, C] → dst [L, C]
 void tcn_linear_resample(const float* src, int src_len, int C, float* dst, int L);

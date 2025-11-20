@@ -63,6 +63,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define time_check_Pin GPIO_PIN_9
+#define time_check_GPIO_Port GPIOC
 #define imu_cs1_Pin GPIO_PIN_0
 #define imu_cs1_GPIO_Port GPIOD
 #define imu_cs2_Pin GPIO_PIN_1

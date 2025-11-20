@@ -24,8 +24,13 @@
 /* USER CODE BEGIN 0 */
 #include "main.h"
 #include "tim.h"
+#include "main.h"
+
+extern volatile uint8_t modelBusy;
+extern volatile bool sensingEnabled;
 extern volatile uint16_t frame_count;
 extern volatile bool recording_done;
+
 /* USER CODE END 0 */
 
 /*----------------------------------------------------------------------------*/
@@ -39,29 +44,47 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     static uint32_t lastTick = 0;
     uint32_t now = HAL_GetTick();
 
-    if (GPIO_Pin == GPIO_PIN_0)
+    if (GPIO_Pin != GPIO_PIN_0)
+        return;
+
+    // 1) 소프트 디바운스 (250ms 이내 재입력 무시)
+    if (now - lastTick < 250)
+        return;
+    lastTick = now;
+
+    // 2) 모델이 아직 돌고 있으면 버튼 무시 (안전장치)
+    if (modelBusy) {
+        printf("⚠ Model busy, button ignored\r\n");
+        return;
+    }
+
+    // 3) 상태 토글: OFF→ON = 녹화 시작, ON→OFF = 녹화 종료
+    if (!sensingEnabled)
     {
-        if (now - lastTick < 250)
-            return;
-        lastTick = now;
+        // ▶ 녹화 시작
+        sensingEnabled  = true;
+        frame_count     = 0;      // 길이 T 카운트 0에서 시작
+        recording_done  = false;  // ★ 새 세션이므로 깔끔하게 리셋
 
-        sensingEnabled = !sensingEnabled;
+        printf("▶ Recording start\r\n");
 
-        if (sensingEnabled)
-        {
-            frame_count = 0;     // 새 동작 수집 시작
-            printf("▶ Recording start\r\n");
-            __HAL_TIM_SET_COUNTER(&htim6, 0);
-            HAL_TIM_Base_Start_IT(&htim6);
-        }
-        else
-        {
-            recording_done = true;  // 버튼으로 강제 종료
-            HAL_TIM_Base_Stop_IT(&htim6);
-            printf("■ Recording stop (%d frames)\r\n", frame_count);
-        }
+        // TIM6 디바운스 안 쓸 거면 아래 두 줄은 지워도 됨
+        // __HAL_TIM_SET_COUNTER(&htim6, 0);
+        // HAL_TIM_Base_Start_IT(&htim6);
+    }
+    else
+    {
+        // ■ 녹화 종료
+        sensingEnabled  = false;
+        recording_done  = true;   // ★ imu_store가 이걸 보고 모델 호출
+
+        printf("■ Recording stop (%u frames)\r\n", frame_count);
+
+        // TIM6 안 쓸 거면 이 줄도 안 써도 됨
+        // HAL_TIM_Base_Stop_IT(&htim6);
     }
 }
+
 
 /* USER CODE END 1 */
 
@@ -82,6 +105,9 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOE_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(time_check_GPIO_Port, time_check_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, imu_cs1_Pin|imu_cs2_Pin|imu_cs3_Pin|imu_cs4_Pin
                           |imu_cs5_Pin, GPIO_PIN_RESET);
 
@@ -92,6 +118,13 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   GPIO_InitStruct.Alternate = GPIO_AF7_USART3;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : time_check_Pin */
+  GPIO_InitStruct.Pin = time_check_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(time_check_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : imu_cs1_Pin imu_cs2_Pin imu_cs3_Pin imu_cs4_Pin
                            imu_cs5_Pin */
