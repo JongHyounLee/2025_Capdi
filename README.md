@@ -67,13 +67,16 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
 <p align="center">
   <img src="img/imu-6500.jpg" alt="Prototype hardware setup" width="300">
 </p>
-- 센서: MPU-6500 / MPU-9250 계열 (가속도 + 자이로 6축)
+
+- 종류: MPU-6500 / MPU-9250 계열 (6축: 가속도 + 자이로)
 - 개수: **5개**
-- 샘플링 주기: **50 Hz** (SMPLRT_DIV 설정)
-- 설정
-  - 자이로 Full Scale: 예) ±2000 dps
-  - 가속도 Full Scale: 예) ±8 g
-  - DLPF(저역통과필터)를 통해 노이즈 감소
+- 샘플링:
+  - 내부 레지스터 설정으로 **50 Hz** 동작 (`SMPLRT_DIV`, DLPF 설정)
+- 설정 예시:
+  - 자이로 Full Scale: ±2000 dps
+  - 가속도 Full Scale: ±8 g
+  - DLPF(저역 통과 필터) 설정으로 노이즈 감소
+
   
 ### 장비
 <p align="center">
@@ -81,26 +84,49 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
 </p>
 ---
 
-## ⚙️ Firmware / RTOS 구조
+## ⚙️ Firmware / RTOS
 
-이 프로젝트의 펌웨어는 목적에 따라 **두 개의 FreeRTOS 프로젝트**로 구성되어 있습니다.
+이 프로젝트의 펌웨어는 FreeRTOS 기반 **두 개의 프로젝트**로 나뉩니다.
 
-1. **Data Logging Firmware** — IMU 5개의 데이터를 50 Hz로 읽어서 CSV 형태로 로깅  
-2. **On-device Inference Firmware** — 수집한 시퀀스를 이용해 TCN 모델로 자세를 분류
+1. `firmware_logging/` — IMU 5개의 데이터를 50 Hz로 읽어서 **CSV로 로깅**  
+2. `firmware_inference/` — 수집한 시퀀스를 이용해 **TCN(on STM32Cube.AI)으로 자세 분류**
 
 ---
 
-### 1️⃣ Data Logging Firmware (로깅 전용)
+### 1️⃣ Data Logging Firmware
 
-> IMU 원시 데이터를 **학습용 CSV 데이터셋**으로 만들기 위한 펌웨어
+> 목적: 모델 학습용 IMU 데이터셋 수집
 
-예시 태스크 생성 코드:
+- 주요 태스크
+  - `Read_imu1`, `Read_imu2`, `Read_imu3`  
+    → 20 ms(50 Hz) 주기로 IMU1~5 SPI 읽기 + 스파이크 필터 + 공유 프레임 갱신  
+  - `vTaskLogger`  
+    → 세 IMU 태스크 완료 신호를 받고, 한 타임스텝 데이터를  
+      **CSV 한 줄(T, IMU1~5, move, label)**로 포맷 후 UART DMA로 전송
 
-```c
-xTaskCreate(vTaskLogger, "vTaskLogger", 1024, NULL, 3, NULL);
-xTaskCreate(Read_imu1,   "Read_imu1",    512, NULL, 2, NULL);
-xTaskCreate(Read_imu2,   "Read_imu2",    512, NULL, 2, NULL);
-xTaskCreate(Read_imu3,   "Read_imu3",    512, NULL, 2, NULL);
+- 특징
+  - 센서 동기화 + 안정적인 CSV 로깅에 특화된 **데이터 수집 전용 펌웨어**
+
+---
+
+### 2️⃣ On-device Inference Firmware
+
+> 목적: MCU에서 **전처리 → TCN 추론 → 자세 클래스 출력**까지 수행
+
+- 주요 태스크
+  - `Read_imu1`, `Read_imu2`, `Read_imu3`  
+    → 로깅용과 동일하게 50 Hz로 IMU1~5 읽기 + 필터링  
+    → 완료 시 `imu_store`에 `xTaskNotify()`로 “IMU 준비 완료” 플래그 전달
+  - `imu_store`  
+    → IMU1~5가 모두 준비되면 한 프레임을 **순차 버퍼(imu_buffer)**에 저장  
+      스쿼트 한 동작 동안 프레임을 누적 후, 녹화가 끝나면 `IMU_MODEL` 깨움
+  - `IMU_MODEL`  
+    → 누적된 시퀀스를 **Linear Resample(len → L=128) + z-score 정규화**  
+      → STM32Cube.AI TCN 모델 실행 → Softmax 결과로 자세 클래스/신뢰도 출력
+
+- 특징
+  - 스쿼트 1동작을 하나의 시퀀스로 보고,  
+    **IMU 수집 ~ 전처리 ~ TCN 추론까지 전부 온디바이스로 끝내는 펌웨어**
 ---
 
 ## 📊 데이터 & 라벨 구조
