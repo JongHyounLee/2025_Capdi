@@ -135,7 +135,7 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
   - 스쿼트 1동작을 하나의 시퀀스로 보고,  
     **IMU 수집 ~ 전처리 ~ TCN 추론까지 전부 온디바이스로 끝내는 펌웨어**
 ---
-## 📊 H / W
+## ⚡ H / W
 
 <p align="center">
   <img src="PCB/img/pcb.png" alt="Prototype hardware setup" width="500">
