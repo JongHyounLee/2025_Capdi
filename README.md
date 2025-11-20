@@ -87,7 +87,7 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
   
 ### 장비
 <p align="center">
-  <img src="PCB/img/setup.jpg" alt="Prototype hardware setup" width="300">
+  <img src="PCB/img/setup.jpg" alt="Prototype hardware setup" width="500">
 </p>
 ---
 
