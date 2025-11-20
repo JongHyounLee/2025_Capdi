@@ -50,10 +50,10 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
 
 ## 🛠 Hardware Spec
 
-### MCU & 보드
+### MCU & 보드 & 장비
 <p align="center">
-  <img src="img/NUCLEO-H755ZI-Q__front.webp" alt="Prototype hardware setup" width="500">
-  <img src="img/NUCLEO-H755ZI-Q_back.webp" alt="Prototype hardware setup" width="500">
+  <img src="img/NUCLEO-H755ZI-Q__front.webp" alt="Prototype hardware setup" width="300">
+  <img src="img/NUCLEO-H755ZI-Q_back.webp" alt="Prototype hardware setup" width="300">
 </p>
 
 - **STM32H755** (Cortex-M7 + Cortex-M4 듀얼 코어)
@@ -65,7 +65,7 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
 
 ### IMU 센서
 <p align="center">
-  <img src="img/imu-6500" alt="Prototype hardware setup" width="500">
+  <img src="img/imu-6500.jpg" alt="Prototype hardware setup" width="300">
 </p>
 - 센서: MPU-6500 / MPU-9250 계열 (가속도 + 자이로 6축)
 - 개수: **5개**
@@ -74,32 +74,33 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
   - 자이로 Full Scale: 예) ±2000 dps
   - 가속도 Full Scale: 예) ±8 g
   - DLPF(저역통과필터)를 통해 노이즈 감소
-
+  
+### 장비
+<p align="center">
+  <img src="img/setup.jpg" alt="Prototype hardware setup" width="300">
+</p>
 ---
 
 ## ⚙️ Firmware / RTOS 구조
 
-> FreeRTOS 위에서 태스크별로 역할을 나눠 깔끔하게 구성
+이 프로젝트의 펌웨어는 목적에 따라 **두 개의 FreeRTOS 프로젝트**로 구성되어 있습니다.
 
-대표적인 태스크 예시:
+1. **Data Logging Firmware** — IMU 5개의 데이터를 50 Hz로 읽어서 CSV 형태로 로깅  
+2. **On-device Inference Firmware** — 수집한 시퀀스를 이용해 TCN 모델로 자세를 분류
 
-- `imu_store_task`
-  - 50 Hz 주기로 모든 IMU에서 데이터 프레임 수집
-  - FSYNC/타이머를 기준으로 동기화
-  - 버퍼에 `(IMU1~5) × (ax, ay, az, gx, gy, gz)` 저장
-- `preprocess_task`
-  - 특정 길이(L=128)만큼 프레임이 쌓이면
-  - **리샘플 + 정규화 + 윈도잉** 수행
-  - Cube.AI 입력 형식 `(L, C)`로 변환
-- `ai_inference_task`
-  - 전처리된 데이터를 STM32Cube.AI에 전달
-  - TCN 모델로 자세 클래스 예측
-- `uart_log_task`
-  - 결과(원시 IMU + 라벨/예측값)를 CSV 형식으로 UART(DMA) 전송
-- 공통
-  - **세마포어 / EventGroup / xTaskNotify** 로 태스크간 동기화
-  - UART는 **DMA + 이진 세마포어**로 전송 완료 관리
+---
 
+### 1️⃣ Data Logging Firmware (로깅 전용)
+
+> IMU 원시 데이터를 **학습용 CSV 데이터셋**으로 만들기 위한 펌웨어
+
+예시 태스크 생성 코드:
+
+```c
+xTaskCreate(vTaskLogger, "vTaskLogger", 1024, NULL, 3, NULL);
+xTaskCreate(Read_imu1,   "Read_imu1",    512, NULL, 2, NULL);
+xTaskCreate(Read_imu2,   "Read_imu2",    512, NULL, 2, NULL);
+xTaskCreate(Read_imu3,   "Read_imu3",    512, NULL, 2, NULL);
 ---
 
 ## 📊 데이터 & 라벨 구조
