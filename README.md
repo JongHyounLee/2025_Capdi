@@ -138,7 +138,7 @@ STM32H7 보드 위에서 **TCN(Temporal Convolutional Network)** 모델로
 ## 📊 H / W
 
 <p align="center">
-  <img src="img/pcb.jpg" alt="Prototype hardware setup" width="300">
+  <img src="img/pcb.png" alt="Prototype hardware setup" width="300">
 </p>
 
 
