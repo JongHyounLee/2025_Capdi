@@ -88,6 +88,16 @@ SPOT는 **5개의 IMU(가속도 + 자이로)**를 신체 주요 관절에 부착
 
 ---
 
+### 🧪 Equipment / Setup
+
+<p align="center">
+  <img src="PCB/img/setup.jpg" width="500" alt="Prototype hardware setup">
+</p>
+
+- **NUCLEO-H755ZI-Q** 보드 + IMU 5개 프로토타입 연결
+- **UART(USB-Serial) 로깅 환경**: PC에서 CSV 수집/시각화
+- **디버깅 장비**: 오실로스코프/로직애널라이저로 SPI·FSYNC·GPIO 타이밍 확인
+- **전원/배선 지그**: 장시간 안정적 수집을 위한 하네스 구성
 ### Custom PCB (In Progress)
 
 SPOT 전용 센서 허브 PCB를 직접 설계·제작하여  
