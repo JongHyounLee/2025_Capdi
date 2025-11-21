@@ -20,7 +20,9 @@
   <img src="https://img.shields.io/badge/EDA-Allegro%20PCB%20Editor-E4002B?style=flat"/>
   <img src="https://img.shields.io/badge/EDA-Allegro%20PCB%20Router-E4002B?style=flat"/>
   <img src="https://img.shields.io/badge/Tool-MATLAB-0076A8?style=flat&logo=matlab&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Tool-Python-3776AB?style=flat&logo=python&logoColor=white"/>
 </p>
+
 
 ---
 
