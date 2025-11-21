@@ -1,4 +1,4 @@
-<h1 align="center">🦵 SPOT — Smart personal Of Training</h1>
+<h1 align="center">🦵 SPOT — Smart Personal Of Training</h1>
 
 <p align="center">
   Multi-IMU Squat Posture Classifier on STM32H7
