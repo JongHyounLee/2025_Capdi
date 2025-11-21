@@ -26,6 +26,8 @@
 #include "tim.h"
 
 
+
+
 /* USER CODE END 0 */
 
 /*----------------------------------------------------------------------------*/
@@ -39,7 +41,8 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     static uint32_t lastTick = 0;
     uint32_t now = HAL_GetTick();
 
-    if (GPIO_Pin == GPIO_PIN_4)
+    // ★ 버튼 핀: PG4 → PD14 → 이제 PB13
+    if (GPIO_Pin == USER_BUTTON_1_Pin)   // == GPIO_PIN_13
     {
         // 250ms 이내 재진입 방지
         if (now - lastTick < 250)
@@ -48,17 +51,15 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
         sensingEnabled = !sensingEnabled;
 
-
         if (sensingEnabled)
         {
-        	times++;
-        	action++;
+            times++;
+            action++;
         }
         __HAL_TIM_SET_COUNTER(&htim6, 0);
         HAL_TIM_Base_Start_IT(&htim6);
     }
 }
-
 /* USER CODE END 1 */
 
 /** Configure pins
@@ -70,6 +71,7 @@ void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -87,6 +89,9 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, imu_cs3_Pin|imu_cs4_Pin, GPIO_PIN_RESET);
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOG, SPI1_FSYNC_Pin|SPI3_FSYNC_Pin|SPI4_FSYNC_Pin, GPIO_PIN_RESET);
+
   /*Configure GPIO pins : imu_cs2_Pin imu_cs1_Pin */
   GPIO_InitStruct.Pin = imu_cs2_Pin|imu_cs1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -101,6 +106,12 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(imu_cs5_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : USER_BUTTON_1_Pin */
+  GPIO_InitStruct.Pin = USER_BUTTON_1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(USER_BUTTON_1_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pins : imu_cs3_Pin imu_cs4_Pin */
   GPIO_InitStruct.Pin = imu_cs3_Pin|imu_cs4_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -108,15 +119,12 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : BUTTON_1_Pin */
-  GPIO_InitStruct.Pin = BUTTON_1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(BUTTON_1_GPIO_Port, &GPIO_InitStruct);
-
-  /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI4_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
+  /*Configure GPIO pins : SPI1_FSYNC_Pin SPI3_FSYNC_Pin SPI4_FSYNC_Pin */
+  GPIO_InitStruct.Pin = SPI1_FSYNC_Pin|SPI3_FSYNC_Pin|SPI4_FSYNC_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
 }
 

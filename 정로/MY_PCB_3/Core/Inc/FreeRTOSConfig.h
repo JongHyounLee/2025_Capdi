@@ -54,6 +54,11 @@
 /* USER CODE BEGIN 0 */
   extern void configureTimerForRunTimeStats(void);
   extern unsigned long getRunTimeCounterValue(void);
+
+
+#undef configUSE_COUNTING_SEMAPHORES
+#define configUSE_COUNTING_SEMAPHORES   1
+
 /* USER CODE END 0 */
 #endif
 #define configENABLE_FPU                         1

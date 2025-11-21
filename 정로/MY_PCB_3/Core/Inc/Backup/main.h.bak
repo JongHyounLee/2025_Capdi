@@ -66,13 +66,18 @@ void Error_Handler(void);
 #define imu_cs1_GPIO_Port GPIOA
 #define imu_cs5_Pin GPIO_PIN_12
 #define imu_cs5_GPIO_Port GPIOF
+#define USER_BUTTON_1_Pin GPIO_PIN_13
+#define USER_BUTTON_1_GPIO_Port GPIOB
 #define imu_cs3_Pin GPIO_PIN_12
 #define imu_cs3_GPIO_Port GPIOD
 #define imu_cs4_Pin GPIO_PIN_13
 #define imu_cs4_GPIO_Port GPIOD
-#define BUTTON_1_Pin GPIO_PIN_4
-#define BUTTON_1_GPIO_Port GPIOG
-#define BUTTON_1_EXTI_IRQn EXTI4_IRQn
+#define SPI1_FSYNC_Pin GPIO_PIN_12
+#define SPI1_FSYNC_GPIO_Port GPIOG
+#define SPI3_FSYNC_Pin GPIO_PIN_14
+#define SPI3_FSYNC_GPIO_Port GPIOG
+#define SPI4_FSYNC_Pin GPIO_PIN_15
+#define SPI4_FSYNC_GPIO_Port GPIOG
 
 /* USER CODE BEGIN Private defines */
 

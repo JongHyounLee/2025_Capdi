@@ -43,6 +43,9 @@ volatile uint8_t label=3;
 SemaphoreHandle_t uartMtx;          // UART 보호용 뮤텍스
 SemaphoreHandle_t uartTxDoneSem;    // DMA 완료 신호용 바이너리 세마포어
 #define UART_BUF_SIZE 1024   // 5개 IMU 데이터 한 줄 충분
+
+
+
 static char uartBuf[2][UART_BUF_SIZE];
 static volatile uint8_t activeBuf = 0;
 static volatile uint8_t uartDmaBusy = 0;
@@ -875,6 +878,7 @@ int main(void)
   MX_SPI3_Init();
   MX_TIM6_Init();
   MX_UART4_Init();
+  MX_SPI4_Init();
   /* USER CODE BEGIN 2 */
 
 
