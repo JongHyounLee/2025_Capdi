@@ -1,0 +1,7 @@
+../Middlewares/Third_Party/FreeRTOS/Source/croutine.c:102:12:xCoRoutineCreate	32	static
+../Middlewares/Third_Party/FreeRTOS/Source/croutine.c:159:6:vCoRoutineAddToDelayedList	24	static
+../Middlewares/Third_Party/FreeRTOS/Source/croutine.c:197:13:prvCheckPendingReadyList	24	static,ignoring_inline_asm
+../Middlewares/Third_Party/FreeRTOS/Source/croutine.c:220:13:prvCheckDelayedList	24	static,ignoring_inline_asm
+../Middlewares/Third_Party/FreeRTOS/Source/croutine.c:278:6:vCoRoutineSchedule	16	static
+../Middlewares/Third_Party/FreeRTOS/Source/croutine.c:308:13:prvInitialiseCoRoutineLists	16	static
+../Middlewares/Third_Party/FreeRTOS/Source/croutine.c:328:12:xCoRoutineRemoveFromEventList	24	static
