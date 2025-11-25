@@ -1,0 +1,343 @@
+ST Edge AI Core v2.2.0-20266 2adc00962
+Created date          : 2025-11-19 23:37:24
+Parameters            : generate --target stm32h7 --name imu_model -m C:/Users/hjl99/Desktop/IMU_MODEL_DATA/final_export_cubeai_90ch_best.h5 --compression none --verbosity 1 --workspace C:/Users/hjl99/AppData/Local/Temp/mxAI_workspace2703190486911993375046124283471406 --output C:/Users/hjl99/.stm32cubemx/imu_model_output
+
+Exec/report summary (generate)
+------------------------------------------------------------------------------------------------------------
+model file         :   C:\Users\hjl99\Desktop\IMU_MODEL_DATA\final_export_cubeai_90ch_best.h5               
+type               :   keras                                                                                
+c_name             :   imu_model                                                                            
+compression        :   none                                                                                 
+options            :   allocate-inputs, allocate-outputs                                                    
+optimization       :   balanced                                                                             
+target/series      :   stm32h7                                                                              
+workspace dir      :   C:\Users\hjl99\AppData\Local\Temp\mxAI_workspace2703190486911993375046124283471406   
+output dir         :   C:\Users\hjl99\.stm32cubemx\imu_model_output                                         
+model_fmt          :   float                                                                                
+model_name         :   final_export_cubeai_90ch_best                                                        
+model_hash         :   0x84f2d2ba7c8d16f7204301d2f8b4641c                                                   
+params #           :   55,349 items (216.21 KiB)                                                            
+------------------------------------------------------------------------------------------------------------
+input 1/1          :   'imu', f32(1x256x90), 90.00 KBytes, activations                                      
+output 1/1         :   'pred', f32(1x5), 20 Bytes, activations                                              
+macc               :   14,070,416                                                                           
+weights (ro)       :   220,052 B (214.89 KiB) (1 segment) / -1,344(-0.6%) vs float model                    
+activations (rw)   :   99,456 B (97.12 KiB) (1 segment) *                                                   
+ram (total)        :   99,456 B (97.12 KiB) = 99,456 + 0 + 0                                                
+------------------------------------------------------------------------------------------------------------
+(*) 'input'/'output' buffers are allocated in the activations buffer
+
+Model name - final_export_cubeai_90ch_best
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+m_id   layer (type,original)                               oshape             param/size             macc             connected to   | c_size               c_macc                  c_type                            
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+0      imu (Input, InputLayer)                             [b:1,h:256,c:90]                                                          |                                              
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+1      stem_conv (Conv2D, Conv1D)                          [b:1,h:256,c:48]   12,960/51,840     3,317,760                      imu   | -51,840(-100.0%)     -3,317,760(-100.0%)     
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+2      stem_bn (ScaleBias, BatchNormalization)             [b:1,h:256,c:48]   96/384               24,576                stem_conv   | +51,648(+13450.0%)   +3,293,232(+13400.2%)   Conv2D_[0]                        
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+3      stem_relu (Nonlinearity, ReLU)                      [b:1,h:256,c:48]                        12,288                  stem_bn   |                                              Nonlinearity_[1]                  
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+5      tcn_block1_conv1_d1 (Conv2D, Conv1D)                [b:1,h:256,c:48]   6,912/27,648      1,769,472                stem_relu   | -27,648(-100.0%)     -1,769,472(-100.0%)     
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+6      tcn_block1_bn1_d1 (ScaleBias, BatchNormalization)   [b:1,h:256,c:48]   96/384               24,576      tcn_block1_conv1_d1   | +27,456(+7150.0%)    +1,744,944(+7100.2%)    Conv2D_[2]                        
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+7      tcn_block1_relu1_d1 (Nonlinearity, ReLU)            [b:1,h:256,c:48]                        12,288        tcn_block1_bn1_d1   |                                              Nonlinearity_[3]                  
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+9      tcn_block1_conv2_d1 (Conv2D, Conv1D)                [b:1,h:256,c:48]   6,912/27,648      1,769,472      tcn_block1_relu1_d1   | -27,648(-100.0%)     -1,769,472(-100.0%)     
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+10     tcn_block1_bn2_d1 (ScaleBias, BatchNormalization)   [b:1,h:256,c:48]   96/384               24,576      tcn_block1_conv2_d1   | +27,456(+7150.0%)    +1,744,944(+7100.2%)    Conv2D_[4]                        
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+11     tcn_block1_add_d1 (Eltwise, Add)                    [b:1,h:256,c:48]                        12,288                stem_relu   |                                              Eltwise/add_[5]                   
+                                                                                                                 tcn_block1_bn2_d1   | 
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+12     tcn_block1_out_relu_d1 (Nonlinearity, ReLU)         [b:1,h:256,c:48]                        12,288        tcn_block1_add_d1   |                                              Nonlinearity_[6]                  
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+13     tcn_block2_conv1_d2 (Conv2D, Conv1D)                [b:1,h:256,c:48]   6,912/27,648      1,769,472   tcn_block1_out_relu_d1   | -27,648(-100.0%)     -1,769,472(-100.0%)     
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+14     tcn_block2_bn1_d2 (ScaleBias, BatchNormalization)   [b:1,h:256,c:48]   96/384               24,576      tcn_block2_conv1_d2   | +27,456(+7150.0%)    +1,744,944(+7100.2%)    Conv2D_[7]                        
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+15     tcn_block2_relu1_d2 (Nonlinearity, ReLU)            [b:1,h:256,c:48]                        12,288        tcn_block2_bn1_d2   |                                              Nonlinearity_[8]                  
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+17     tcn_block2_conv2_d2 (Conv2D, Conv1D)                [b:1,h:256,c:48]   6,912/27,648      1,769,472      tcn_block2_relu1_d2   | -27,648(-100.0%)     -1,769,472(-100.0%)     
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+18     tcn_block2_bn2_d2 (ScaleBias, BatchNormalization)   [b:1,h:256,c:48]   96/384               24,576      tcn_block2_conv2_d2   | +27,456(+7150.0%)    +1,744,944(+7100.2%)    Conv2D_[9]                        
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+19     tcn_block2_add_d2 (Eltwise, Add)                    [b:1,h:256,c:48]                        12,288   tcn_block1_out_relu_d1   |                                              Eltwise/add_[10]                  
+                                                                                                                 tcn_block2_bn2_d2   | 
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+20     tcn_block2_out_relu_d2 (Nonlinearity, ReLU)         [b:1,h:256,c:48]                        12,288        tcn_block2_add_d2   |                                              Nonlinearity_[11]                 
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+21     tcn_block3_conv1_d4 (Conv2D, Conv1D)                [b:1,h:256,c:48]   6,912/27,648      1,769,472   tcn_block2_out_relu_d2   | -27,648(-100.0%)     -1,769,472(-100.0%)     
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+22     tcn_block3_bn1_d4 (ScaleBias, BatchNormalization)   [b:1,h:256,c:48]   96/384               24,576      tcn_block3_conv1_d4   | +27,456(+7150.0%)    +1,744,944(+7100.2%)    Conv2D_[12]                       
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+23     tcn_block3_relu1_d4 (Nonlinearity, ReLU)            [b:1,h:256,c:48]                        12,288        tcn_block3_bn1_d4   |                                              Nonlinearity_[13]                 
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+25     tcn_block3_conv2_d4 (Conv2D, Conv1D)                [b:1,h:256,c:48]   6,912/27,648      1,769,472      tcn_block3_relu1_d4   | -27,648(-100.0%)     -1,769,472(-100.0%)     
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+26     tcn_block3_bn2_d4 (ScaleBias, BatchNormalization)   [b:1,h:256,c:48]   96/384               24,576      tcn_block3_conv2_d4   | +27,456(+7150.0%)    +1,744,944(+7100.2%)    Conv2D_[14]                       
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+27     tcn_block3_add_d4 (Eltwise, Add)                    [b:1,h:256,c:48]                        12,288   tcn_block2_out_relu_d2   |                                              Eltwise/add_[15]                  
+                                                                                                                 tcn_block3_bn2_d4   | 
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+28     tcn_block3_out_relu_d4 (Nonlinearity, ReLU)         [b:1,h:256,c:48]                        12,288        tcn_block3_add_d4   |                                              Nonlinearity_[16]                 
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+29     gap_pool (Pool, GlobalAveragePooling1D)             [b:1,h:1,c:48]                          12,288   tcn_block3_out_relu_d4   |                                              Pool_[17]                         
+       gap (Reshape, GlobalAveragePooling1D)               [b:1,c:48]                                                     gap_pool   |                                              
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+30     pred_dense (Dense, Dense)                           [b:1,c:5]          245/980                 245                      gap   |                      +75(+30.6%)             Dense_/Nonlinearity_[o][18, 19]   
+       pred (Nonlinearity, Dense)                          [b:1,c:5]                                   75               pred_dense   |                      -75(-100.0%)            
+------ --------------------------------------------------- ------------------ --------------- ----------- ------------------------ --- -------------------- ----------------------- --------------------------------- 
+model/c-model: macc=14,242,112/14,070,416 -171,696(-1.2%) weights=221,396/220,052 -1,344(-0.6%) activations=--/99,456 io=--/0
+
+
+
+Generated C-graph summary
+------------------------------------------------------------------------------------------------------------------------
+model name            : final_export_cubeai_90ch_best
+c-name                : imu_model
+c-node #              : 20
+c-array #             : 40
+activations size      : 99456 (1 segment)
+weights size          : 220052 (1 segment)
+macc                  : 14070416
+inputs                : ['imu_output']
+outputs               : ['pred_output']
+
+C-Arrays (40)
+------ ------------------------------- ------------- ------------------------- ------------- --------- 
+c_id   name (*_array)                  item/size     domain/mem-pool           c-type        comment   
+------ ------------------------------- ------------- ------------------------- ------------- --------- 
+0      gap_pool_output                 48/192        activations/**default**   float                   
+1      imu_output                      23040/92160   activations/**default**   float         /input    
+2      pred_dense_bias                 5/20          weights/weights           const float             
+3      pred_dense_output               5/20          activations/**default**   float                   
+4      pred_dense_weights              240/960       weights/weights           const float             
+5      pred_output                     5/20          activations/**default**   float         /output   
+6      stem_conv_bias                  48/192        weights/weights           const float             
+7      stem_conv_output                12288/49152   activations/**default**   float                   
+8      stem_conv_scratch0              270/1080      activations/**default**   float                   
+9      stem_conv_weights               12960/51840   weights/weights           const float             
+10     stem_relu_output                12288/49152   activations/**default**   float                   
+11     tcn_block1_add_d1_output        12288/49152   activations/**default**   float                   
+12     tcn_block1_conv1_d1_bias        48/192        weights/weights           const float             
+13     tcn_block1_conv1_d1_output      12288/49152   activations/**default**   float                   
+14     tcn_block1_conv1_d1_scratch0    144/576       activations/**default**   float                   
+15     tcn_block1_conv1_d1_weights     6912/27648    weights/weights           const float             
+16     tcn_block1_conv2_d1_bias        48/192        weights/weights           const float             
+17     tcn_block1_conv2_d1_output      12288/49152   activations/**default**   float                   
+18     tcn_block1_conv2_d1_scratch0    144/576       activations/**default**   float                   
+19     tcn_block1_conv2_d1_weights     6912/27648    weights/weights           const float             
+20     tcn_block1_out_relu_d1_output   12288/49152   activations/**default**   float                   
+21     tcn_block1_relu1_d1_output      12288/49152   activations/**default**   float                   
+22     tcn_block2_add_d2_output        12288/49152   activations/**default**   float                   
+23     tcn_block2_conv1_d2_bias        48/192        weights/weights           const float             
+24     tcn_block2_conv1_d2_output      12288/49152   activations/**default**   float                   
+25     tcn_block2_conv1_d2_weights     6912/27648    weights/weights           const float             
+26     tcn_block2_conv2_d2_bias        48/192        weights/weights           const float             
+27     tcn_block2_conv2_d2_output      12288/49152   activations/**default**   float                   
+28     tcn_block2_conv2_d2_weights     6912/27648    weights/weights           const float             
+29     tcn_block2_out_relu_d2_output   12288/49152   activations/**default**   float                   
+30     tcn_block2_relu1_d2_output      12288/49152   activations/**default**   float                   
+31     tcn_block3_add_d4_output        12288/49152   activations/**default**   float                   
+32     tcn_block3_conv1_d4_bias        48/192        weights/weights           const float             
+33     tcn_block3_conv1_d4_output      12288/49152   activations/**default**   float                   
+34     tcn_block3_conv1_d4_weights     6912/27648    weights/weights           const float             
+35     tcn_block3_conv2_d4_bias        48/192        weights/weights           const float             
+36     tcn_block3_conv2_d4_output      12288/49152   activations/**default**   float                   
+37     tcn_block3_conv2_d4_weights     6912/27648    weights/weights           const float             
+38     tcn_block3_out_relu_d4_output   12288/49152   activations/**default**   float                   
+39     tcn_block3_relu1_d4_output      12288/49152   activations/**default**   float                   
+------ ------------------------------- ------------- ------------------------- ------------- --------- 
+
+C-Layers (20)
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+c_id   name (*_layer)           id   layer_type      macc      rom     tensors                            shape (array id)      
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+0      stem_conv                2    Conv2D          3317808   52032   I: imu_output                      f32(1x256x90) (1)     
+                                                                       S: stem_conv_scratch0                                    
+                                                                       W: stem_conv_weights               f32(48x3x1x90) (9)    
+                                                                       W: stem_conv_bias                  f32(48) (6)           
+                                                                       O: stem_conv_output                f32(1x256x48) (7)     
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+1      stem_relu                3    Nonlinearity    12288     0       I: stem_conv_output                f32(1x256x48) (7)     
+                                                                       O: stem_relu_output                f32(1x256x48) (10)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+2      tcn_block1_conv1_d1      6    Conv2D          1769520   27840   I: stem_relu_output                f32(1x256x48) (10)    
+                                                                       S: tcn_block1_conv1_d1_scratch0                          
+                                                                       W: tcn_block1_conv1_d1_weights     f32(48x3x1x48) (15)   
+                                                                       W: tcn_block1_conv1_d1_bias        f32(48) (12)          
+                                                                       O: tcn_block1_conv1_d1_output      f32(1x256x48) (13)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+3      tcn_block1_relu1_d1      7    Nonlinearity    12288     0       I: tcn_block1_conv1_d1_output      f32(1x256x48) (13)    
+                                                                       O: tcn_block1_relu1_d1_output      f32(1x256x48) (21)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+4      tcn_block1_conv2_d1      10   Conv2D          1769520   27840   I: tcn_block1_relu1_d1_output      f32(1x256x48) (21)    
+                                                                       S: tcn_block1_conv2_d1_scratch0                          
+                                                                       W: tcn_block1_conv2_d1_weights     f32(48x3x1x48) (19)   
+                                                                       W: tcn_block1_conv2_d1_bias        f32(48) (16)          
+                                                                       O: tcn_block1_conv2_d1_output      f32(1x256x48) (17)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+5      tcn_block1_add_d1        11   Eltwise/add     12288     0       I: stem_relu_output                f32(1x256x48) (10)    
+                                                                       I: tcn_block1_conv2_d1_output      f32(1x256x48) (10)    
+                                                                       O: tcn_block1_add_d1_output        f32(1x256x48) (11)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+6      tcn_block1_out_relu_d1   12   Nonlinearity    12288     0       I: tcn_block1_add_d1_output        f32(1x256x48) (11)    
+                                                                       O: tcn_block1_out_relu_d1_output   f32(1x256x48) (20)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+7      tcn_block2_conv1_d2      14   Conv2D          1769520   27840   I: tcn_block1_out_relu_d1_output   f32(1x256x48) (20)    
+                                                                       W: tcn_block2_conv1_d2_weights     f32(48x3x1x48) (25)   
+                                                                       W: tcn_block2_conv1_d2_bias        f32(48) (23)          
+                                                                       O: tcn_block2_conv1_d2_output      f32(1x256x48) (24)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+8      tcn_block2_relu1_d2      15   Nonlinearity    12288     0       I: tcn_block2_conv1_d2_output      f32(1x256x48) (24)    
+                                                                       O: tcn_block2_relu1_d2_output      f32(1x256x48) (30)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+9      tcn_block2_conv2_d2      18   Conv2D          1769520   27840   I: tcn_block2_relu1_d2_output      f32(1x256x48) (30)    
+                                                                       W: tcn_block2_conv2_d2_weights     f32(48x3x1x48) (28)   
+                                                                       W: tcn_block2_conv2_d2_bias        f32(48) (26)          
+                                                                       O: tcn_block2_conv2_d2_output      f32(1x256x48) (27)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+10     tcn_block2_add_d2        19   Eltwise/add     12288     0       I: tcn_block1_out_relu_d1_output   f32(1x256x48) (20)    
+                                                                       I: tcn_block2_conv2_d2_output      f32(1x256x48) (20)    
+                                                                       O: tcn_block2_add_d2_output        f32(1x256x48) (22)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+11     tcn_block2_out_relu_d2   20   Nonlinearity    12288     0       I: tcn_block2_add_d2_output        f32(1x256x48) (22)    
+                                                                       O: tcn_block2_out_relu_d2_output   f32(1x256x48) (29)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+12     tcn_block3_conv1_d4      22   Conv2D          1769520   27840   I: tcn_block2_out_relu_d2_output   f32(1x256x48) (29)    
+                                                                       W: tcn_block3_conv1_d4_weights     f32(48x3x1x48) (34)   
+                                                                       W: tcn_block3_conv1_d4_bias        f32(48) (32)          
+                                                                       O: tcn_block3_conv1_d4_output      f32(1x256x48) (33)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+13     tcn_block3_relu1_d4      23   Nonlinearity    12288     0       I: tcn_block3_conv1_d4_output      f32(1x256x48) (33)    
+                                                                       O: tcn_block3_relu1_d4_output      f32(1x256x48) (39)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+14     tcn_block3_conv2_d4      26   Conv2D          1769520   27840   I: tcn_block3_relu1_d4_output      f32(1x256x48) (39)    
+                                                                       W: tcn_block3_conv2_d4_weights     f32(48x3x1x48) (37)   
+                                                                       W: tcn_block3_conv2_d4_bias        f32(48) (35)          
+                                                                       O: tcn_block3_conv2_d4_output      f32(1x256x48) (36)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+15     tcn_block3_add_d4        27   Eltwise/add     12288     0       I: tcn_block2_out_relu_d2_output   f32(1x256x48) (29)    
+                                                                       I: tcn_block3_conv2_d4_output      f32(1x256x48) (29)    
+                                                                       O: tcn_block3_add_d4_output        f32(1x256x48) (31)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+16     tcn_block3_out_relu_d4   28   Nonlinearity    12288     0       I: tcn_block3_add_d4_output        f32(1x256x48) (31)    
+                                                                       O: tcn_block3_out_relu_d4_output   f32(1x256x48) (38)    
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+17     gap_pool                 29   Pool            12288     0       I: tcn_block3_out_relu_d4_output   f32(1x256x48) (38)    
+                                                                       O: gap_pool_output                 f32(1x1x48) (0)       
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+18     pred_dense               30   Dense           245       980     I: gap_pool_output                 f32(1x1x48) (0)       
+                                                                       W: pred_dense_weights              f32(5x48) (4)         
+                                                                       W: pred_dense_bias                 f32(5) (2)            
+                                                                       O: pred_dense_output               f32(1x5) (3)          
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+19     pred                     30   Nonlinearity    75        0       I: pred_dense_output               f32(1x5) (3)          
+                                                                       O: pred_output                     f32(1x5) (5)          
+------ ------------------------ ---- --------------- --------- ------- ---------------------------------- --------------------- 
+
+
+
+Number of operations per c-layer
+------- ------ --------------------------------------- ------------ -------------- 
+c_id    m_id   name (type)                                      #op           type 
+------- ------ --------------------------------------- ------------ -------------- 
+0       2      stem_conv (Conv2D)                         3,317,808   smul_f32_f32 
+1       3      stem_relu (Nonlinearity)                      12,288     op_f32_f32 
+2       6      tcn_block1_conv1_d1 (Conv2D)               1,769,520   smul_f32_f32 
+3       7      tcn_block1_relu1_d1 (Nonlinearity)            12,288     op_f32_f32 
+4       10     tcn_block1_conv2_d1 (Conv2D)               1,769,520   smul_f32_f32 
+5       11     tcn_block1_add_d1 (Eltwise/add)               12,288     op_f32_f32 
+6       12     tcn_block1_out_relu_d1 (Nonlinearity)         12,288     op_f32_f32 
+7       14     tcn_block2_conv1_d2 (Conv2D)               1,769,520   smul_f32_f32 
+8       15     tcn_block2_relu1_d2 (Nonlinearity)            12,288     op_f32_f32 
+9       18     tcn_block2_conv2_d2 (Conv2D)               1,769,520   smul_f32_f32 
+10      19     tcn_block2_add_d2 (Eltwise/add)               12,288     op_f32_f32 
+11      20     tcn_block2_out_relu_d2 (Nonlinearity)         12,288     op_f32_f32 
+12      22     tcn_block3_conv1_d4 (Conv2D)               1,769,520   smul_f32_f32 
+13      23     tcn_block3_relu1_d4 (Nonlinearity)            12,288     op_f32_f32 
+14      26     tcn_block3_conv2_d4 (Conv2D)               1,769,520   smul_f32_f32 
+15      27     tcn_block3_add_d4 (Eltwise/add)               12,288     op_f32_f32 
+16      28     tcn_block3_out_relu_d4 (Nonlinearity)         12,288     op_f32_f32 
+17      29     gap_pool (Pool)                               12,288   smul_f32_f32 
+18      30     pred_dense (Dense)                               245   smul_f32_f32 
+19      30     pred (Nonlinearity)                               75     op_f32_f32 
+------- ------ --------------------------------------- ------------ -------------- 
+total                                                    14,070,416 
+
+Number of operation types
+---------------- ------------ ----------- 
+operation type              #           % 
+---------------- ------------ ----------- 
+smul_f32_f32       13,947,461       99.1% 
+op_f32_f32            122,955        0.9% 
+
+Complexity report (model)
+------ ------------------------ ------------------------- ------------------------- ---------- 
+m_id   name                     c_macc                    c_rom                     c_id       
+------ ------------------------ ------------------------- ------------------------- ---------- 
+2      stem_bn                  ||||||||||||||||  23.6%   ||||||||||||||||  23.6%   [0]        
+3      stem_relu                |                  0.1%   |                  0.0%   [1]        
+6      tcn_block1_bn1_d1        |||||||||         12.6%   |||||||||         12.7%   [2]        
+7      tcn_block1_relu1_d1      |                  0.1%   |                  0.0%   [3]        
+10     tcn_block1_bn2_d1        |||||||||         12.6%   |||||||||         12.7%   [4]        
+11     tcn_block1_add_d1        |                  0.1%   |                  0.0%   [5]        
+12     tcn_block1_out_relu_d1   |                  0.1%   |                  0.0%   [6]        
+14     tcn_block2_bn1_d2        |||||||||         12.6%   |||||||||         12.7%   [7]        
+15     tcn_block2_relu1_d2      |                  0.1%   |                  0.0%   [8]        
+18     tcn_block2_bn2_d2        |||||||||         12.6%   |||||||||         12.7%   [9]        
+19     tcn_block2_add_d2        |                  0.1%   |                  0.0%   [10]       
+20     tcn_block2_out_relu_d2   |                  0.1%   |                  0.0%   [11]       
+22     tcn_block3_bn1_d4        |||||||||         12.6%   |||||||||         12.7%   [12]       
+23     tcn_block3_relu1_d4      |                  0.1%   |                  0.0%   [13]       
+26     tcn_block3_bn2_d4        |||||||||         12.6%   |||||||||         12.7%   [14]       
+27     tcn_block3_add_d4        |                  0.1%   |                  0.0%   [15]       
+28     tcn_block3_out_relu_d4   |                  0.1%   |                  0.0%   [16]       
+29     gap_pool                 |                  0.1%   |                  0.0%   [17]       
+30     pred_dense               |                  0.0%   |                  0.4%   [18, 19]   
+------ ------------------------ ------------------------- ------------------------- ---------- 
+macc=14,070,416 weights=220,052 act=99,456 ram_io=0
+ 
+ Requested memory size by section - "stm32h7" target
+ ------------------------------ -------- --------- ------- -------- 
+ module                             text    rodata    data      bss 
+ ------------------------------ -------- --------- ------- -------- 
+ NetworkRuntime1020_CM7_GCC.a     12,468         0       0        0 
+ imu_model.o                       1,004       160   5,548      244 
+ imu_model_data.o                     48        16      88        0 
+ lib (toolchain)*                    318       328       0        0 
+ ------------------------------ -------- --------- ------- -------- 
+ RT total**                       13,838       504   5,636      244 
+ ------------------------------ -------- --------- ------- -------- 
+ weights                               0   220,056       0        0 
+ activations                           0         0       0   99,456 
+ io                                    0         0       0        0 
+ ------------------------------ -------- --------- ------- -------- 
+ TOTAL                            13,838   220,560   5,636   99,700 
+ ------------------------------ -------- --------- ------- -------- 
+ *  toolchain objects (libm/libgcc*)
+ ** RT AI runtime objects (kernels+infrastructure)
+  
+  Summary - "stm32h7" target
+  -------------------------------------------------
+               FLASH (ro)     %*   RAM (rw)      % 
+  -------------------------------------------------
+  RT total         19,978   8.3%      5,880   5.6% 
+  -------------------------------------------------
+  TOTAL           240,034           105,336        
+  -------------------------------------------------
+  *  rt/total
+
+
+Generated files (7)
+---------------------------------------------------------------------- 
+C:\Users\hjl99\.stm32cubemx\imu_model_output\imu_model_data_params.h   
+C:\Users\hjl99\.stm32cubemx\imu_model_output\imu_model_data_params.c   
+C:\Users\hjl99\.stm32cubemx\imu_model_output\imu_model_data.h          
+C:\Users\hjl99\.stm32cubemx\imu_model_output\imu_model_data.c          
+C:\Users\hjl99\.stm32cubemx\imu_model_output\imu_model_config.h        
+C:\Users\hjl99\.stm32cubemx\imu_model_output\imu_model.h               
+C:\Users\hjl99\.stm32cubemx\imu_model_output\imu_model.c               

@@ -1,8 +1,0 @@
-../Core/Src/syscalls.c:11:5:_write	24	static
-../Core/Src/syscalls.c:22:5:_read	24	static
-../Core/Src/syscalls.c:23:5:_close	16	static
-../Core/Src/syscalls.c:24:5:_fstat	16	static
-../Core/Src/syscalls.c:25:5:_isatty	16	static
-../Core/Src/syscalls.c:26:5:_lseek	24	static
-../Core/Src/syscalls.c:27:5:_kill	16	static
-../Core/Src/syscalls.c:28:5:_getpid	4	static
